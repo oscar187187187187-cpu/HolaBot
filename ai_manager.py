@@ -7,7 +7,7 @@ if "GOOGLE_API_KEY" in st.secrets:
 
 def get_spanish_tutor_response(user_input, known_words_dict):
    try:
-       model = genai.GenerativeModel('gemini-1.5-flash')
+       model = genai.GenerativeModel('gemini-1.5-flash-latest')
        known_words = known_words_dict.get("known_words", [])
 
        # Die verbesserte Anweisung an die KI (Bonus Feature)
