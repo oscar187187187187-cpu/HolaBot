@@ -3,7 +3,6 @@ import streamlit as st
 from groq import Groq
 
 def get_spanish_tutor_response(user_input, known_words_dict):
-   # API Key aus den Secrets holen
    api_key = st.secrets.get("GROQ_API_KEY")
    if not api_key:
        return "Fehler: Bitte hinterlege GROQ_API_KEY in den Streamlit Secrets."
@@ -20,7 +19,8 @@ def get_spanish_tutor_response(user_input, known_words_dict):
                {"role": "system", "content": system_prompt},
                {"role": "user", "content": user_input}
            ],
-           model="llama3-8b-8192", # Das ist ein extrem schnelles und kostenloses Modell
+           # HIER DIE ÄNDERUNG: llama-3.1-8b-instant ist das aktuelle Gratis-Modell
+           model="llama-3.1-8b-instant",
        )
 
        return chat_completion.choices[0].message.content
