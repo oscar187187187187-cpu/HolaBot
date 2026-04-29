@@ -7,7 +7,8 @@ def load_vocab():
    if os.path.exists(DB_FILE):
        try:
            with open(DB_FILE, "r") as f:
-               return json.load(f)
+               data = json.load(f)
+               return data if isinstance(data, dict) else {"known_words": []}
        except Exception:
            return {"known_words": []}
    return {"known_words": []}
@@ -18,9 +19,9 @@ def save_vocab(words_dict):
 
 def add_duolingo_words(new_words_list):
    data = load_vocab()
-   # Bestehende Wörter laden und neue hinzufügen (verhindert doppelte Wörter)
    current_words = set(data.get("known_words", []))
-   current_words.update(new_words_list)
-
+   for word in new_words_list:
+       if word.strip():
+           current_words.add(word.strip())
    data["known_words"] = list(current_words)
    save_vocab(data)
