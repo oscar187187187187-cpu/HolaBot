@@ -1,5 +1,0 @@
-git add .
-git commit -m "Erste Version meiner App"
-git push origin main
-oder, falls dein Branch 'master' heißt:
-git push origin master
