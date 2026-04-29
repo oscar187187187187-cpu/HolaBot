@@ -1,28 +1,28 @@
-import google.generativeai as genai
+import os
 import streamlit as st
-
-# Holt den Key sicher aus der Streamlit Cloud
-if "GOOGLE_API_KEY" in st.secrets:
-   genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+from groq import Groq
 
 def get_spanish_tutor_response(user_input, known_words_dict):
+   # API Key aus den Secrets holen
+   api_key = st.secrets.get("GROQ_API_KEY")
+   if not api_key:
+       return "Fehler: Bitte hinterlege GROQ_API_KEY in den Streamlit Secrets."
+
    try:
-       model = genai.GenerativeModel('gemini-1.5-flash-latest')
+       client = Groq(api_key=api_key)
        known_words = known_words_dict.get("known_words", [])
 
-       # Die verbesserte Anweisung an die KI (Bonus Feature)
-       system_prompt = f"""Du bist ein freundlicher, muttersprachlicher Spanischlehrer namens HolaBot.
-       Dein Schüler kennt bisher ungefähr diese Vokabeln: {known_words}.
-       Deine Regeln:
-       1. Antworte primär auf Spanisch, aber halte es auf einem anfängerfreundlichen Niveau.
-       2. Wenn der Schüler einen Fehler macht, korrigiere ihn sanft auf Deutsch.
-       3. Nutze ab und zu ein neues Wort und erkläre es kurz.
-       4. Halte deine Antworten kurz, natürlich und motivierend."""
+       system_prompt = f"""Du bist ein freundlicher Spanischlehrer. Der Schüler kennt diese Wörter: {known_words}.
+       Korrigiere Fehler sanft auf Deutsch. Antworte auf Spanisch."""
 
-       # Fügt die Systemanweisung und die Nutzernachricht zusammen
-       full_prompt = f"{system_prompt}\n\nSchüler: {user_input}\nHolaBot:"
+       chat_completion = client.chat.completions.create(
+           messages=[
+               {"role": "system", "content": system_prompt},
+               {"role": "user", "content": user_input}
+           ],
+           model="llama3-8b-8192", # Das ist ein extrem schnelles und kostenloses Modell
+       )
 
-       response = model.generate_content(full_prompt)
-       return response.text
+       return chat_completion.choices[0].message.content
    except Exception as e:
-       return f"Ups, es gab ein Problem mit der KI-Verbindung. Fehlermeldung: {e}"
+       return f"KI-Fehler (Groq): {str(e)}"
