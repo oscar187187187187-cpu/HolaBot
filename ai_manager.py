@@ -26,17 +26,18 @@ def text_to_speech(text):
 def get_tutor_response(user_input, data, mode):
    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
    words = data["known_words"]
-   level = (data["xp"] // 100) + 1
+   unit = data["unit"]
 
    if mode == "Konversation":
-       prompt = f"Tutor Modus. Level {level}. Vokabeln: {words}. Antworte auf Spanisch NUR mit diesen Wörtern. Erkläre Fehler auf Deutsch."
+       prompt = f"""Du bist ein Spanisch-Tutor. Nutzer ist in Unit {unit}.
+       Bekannte Wörter: {words}. 
+       ANTWORTE NUR AUF SPANISCH mit diesen Wörtern. Wenn er Fehler macht, erkläre sie kurz auf DEUTSCH und kehre zu Spanisch zurück."""
    else:
-       # Lernpfad Logik: KI entscheidet zwischen Wiederholung oder Neuem
-       prompt = f"""Lernpfad Modus. Level {level}. Bekannte Wörter: {words}.
-       Entscheide:
-       1. Wenn der Nutzer weniger als 10 Wörter kennt, bringe 1 neues Wort bei.
-       2. Wenn er mehr kennt, frage ein zufälliges altes Wort aus der Liste ab (Übersetzung Spanisch-Deutsch).
-       Gib dem Nutzer eine XP Belohnung in Aussicht. Antworte motivierend wie Duolingo."""
+       prompt = f"""Du bist ein Duolingo-Lehrer. Unit {unit}. Bekannte Wörter: {words}.
+       PFAD-LOGIK: 
+       1. Wenn der Nutzer gerade eine Antwort gegeben hat, korrigiere ihn.
+       2. Frage dann entweder ein altes Wort ab ODER führe ein neues Wort ein, das zu Unit {unit} passt.
+       3. Halte es kurz und motivierend. Nutze Emojis."""
 
    res = client.chat.completions.create(
        messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_input}],
