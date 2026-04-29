@@ -1,60 +1,84 @@
 import streamlit as st
-from ai_manager import get_spanish_tutor_response
+import os
+from ai_manager import get_spanish_tutor_response, transcribe_audio, text_to_speech
 from data_manager import load_vocab, add_duolingo_words
+from audio_recorder_streamlit import audio_recorder
 
-# Bonus Feature: Bessere Seitendarstellung
 st.set_page_config(page_title="HolaBot", page_icon="🇪🇸", layout="centered")
+st.title("🇪🇸 HolaBot: Dein Sprachlehrer")
 
-st.title("🇪🇸 HolaBot: Dein KI-Spanisch-Lehrer")
-st.write("¡Hola! Schreib mir etwas auf Spanisch und wir üben zusammen.")
-
-# Initialisiere den Chatverlauf im Speicher
 if "messages" not in st.session_state:
    st.session_state.messages = []
+if "last_audio" not in st.session_state:
+   st.session_state.last_audio = None
 
-# --- SIDEBAR (Bonus Features) ---
+# --- EINSTELLUNGEN & MODI ---
 with st.sidebar:
-   st.header("⚙️ Einstellungen")
-   if st.button("🗑️ Chatverlauf löschen"):
+   st.header("🎮 Modus wählen")
+   app_mode = st.radio("Was möchtest du tun?", ("Konversation", "Lernen (Neue Wörter)"))
+
+   st.divider()
+   st.header("📚 Dein Wortschatz")
+   new_word = st.text_input("Wort hinzufügen:")
+   if st.button("➕ Speichern") and new_word:
+       add_duolingo_words([new_word.strip()])
+       st.success(f"'{new_word}' gespeichert!")
+
+   vocab_data = load_vocab()
+   with st.expander(f"Alle Wörter ({len(vocab_data.get('known_words', []))})"):
+       st.write(", ".join(vocab_data.get('known_words', [])) if vocab_data.get('known_words') else "Keine Wörter.")
+
+   st.divider()
+   if st.button("🗑️ Chat löschen"):
        st.session_state.messages = []
        st.rerun()
 
-   st.divider()
+# --- CHAT & AUDIO BEREICH ---
+for msg in st.session_state.messages:
+   with st.chat_message(msg["role"]):
+       st.markdown(msg["content"])
+       if msg.get("audio_path") and os.path.exists(msg["audio_path"]):
+           st.audio(msg["audio_path"])
 
-   st.header("📚 Dein Wortschatz")
-   st.write("Trage hier Wörter ein, die du bereits kennst.")
-   new_word = st.text_input("Neues Wort (z.B. el perro):")
-   if st.button("➕ Hinzufügen") and new_word:
-       add_duolingo_words([new_word.strip()])
-       st.success(f"'{new_word}' wurde gespeichert!")
+st.write("---")
+col1, col2 = st.columns([1, 4])
+with col1:
+   st.write("🎤 Sprechen:")
+   # Mikrofon-Button für den Nutzer
+   audio_bytes = audio_recorder(text="", recording_color="#d32f2f", neutral_color="#4caf50", icon_size="2x")
+with col2:
+   # Text-Feld als Alternative
+   prompt = st.chat_input("...oder tippe etwas ein!")
 
-   vocab_data = load_vocab()
-   with st.expander("Alle gelernten Wörter ansehen"):
-       if vocab_data.get("known_words"):
-           st.write(", ".join(vocab_data["known_words"]))
-       else:
-           st.write("Noch keine Wörter gespeichert.")
+# --- LOGIK ---
+user_text = None
 
-# --- CHAT BEREICH ---
-# Zeige alte Nachrichten an
-for message in st.session_state.messages:
-   with st.chat_message(message["role"]):
-       st.markdown(message["content"])
+# Wenn Sprachnachricht aufgenommen wurde
+if audio_bytes and audio_bytes != st.session_state.last_audio:
+   st.session_state.last_audio = audio_bytes
+   with st.spinner("Höre zu..."):
+       user_text = transcribe_audio(audio_bytes)
 
-# Eingabefeld für den Nutzer
-if prompt := st.chat_input("Escribe algo en español..."):
-   # Nachricht des Nutzers anzeigen und speichern
-   st.session_state.messages.append({"role": "user", "content": prompt})
+# Wenn Text eingegeben wurde
+if prompt:
+   user_text = prompt
+
+# Antwort generieren
+if user_text:
+   st.session_state.messages.append({"role": "user", "content": user_text})
    with st.chat_message("user"):
-       st.markdown(prompt)
+       st.markdown(user_text)
 
-   # KI-Antwort generieren
    with st.chat_message("assistant"):
-       # Bonus Feature: Lade-Animation
-       with st.spinner("HolaBot überlegt..."):
-           known_words = load_vocab()
-           response = get_spanish_tutor_response(prompt, known_words)
+       with st.spinner("HolaBot denkt nach..."):
+           vocab = load_vocab()
+           response = get_spanish_tutor_response(user_text, vocab, app_mode)
            st.markdown(response)
 
-   # Antwort speichern
-   st.session_state.messages.append({"role": "assistant", "content": response})
+           # Stimme generieren
+           audio_file = text_to_speech(response)
+           if audio_file:
+               st.audio(audio_file, autoplay=True)
+
+   st.session_state.messages.append({"role": "assistant", "content": response, "audio_path": audio_file})
+   st.rerun()
