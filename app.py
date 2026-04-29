@@ -1,96 +1,79 @@
-
 import streamlit as st
 import os
-from ai_manager import get_spanish_tutor_response, transcribe_audio, text_to_speech
-from data_manager import load_vocab, add_words_bulk, get_user_level
+from data_manager import load_data, update_xp, add_words_bulk
+from ai_manager import get_tutor_response, transcribe_audio, text_to_speech
 from audio_recorder_streamlit import audio_recorder
 
-st.set_page_config(page_title="HolaBot", page_icon="🇪🇸", layout="centered")
+# --- DESIGN & CSS ---
+st.set_page_config(page_title="HolaLingo", page_icon="🦉")
 
-# --- GETRENNTE CHAT VERLÄUFE ---
-if "chat_conv" not in st.session_state: st.session_state.chat_conv = []
-if "chat_learn" not in st.session_state: st.session_state.chat_learn = []
-if "last_audio" not in st.session_state: st.session_state.last_audio = None
+st.markdown("""
+<style>
+   .main { background-color: #f7f7f7; }
+   .stButton>button { border-radius: 12px; background-color: #58cc02; color: white; border: none; font-weight: bold; height: 3em; width: 100%; transition: 0.3s; }
+   .stButton>button:hover { background-color: #46a302; transform: scale(1.02); }
+   .sidebar .sidebar-content { background-color: #ffffff; }
+   .user-card { background: white; padding: 20px; border-radius: 15px; border: 2px solid #e5e5e5; margin-bottom: 10px; }
+   .streak-fire { color: #ff9600; font-size: 24px; font-weight: bold; }
+</style>
+""", unsafe_allow_html=True)
 
-# Level berechnen
-user_level, word_count = get_user_level()
+# --- STATE ---
+data = load_data()
+if "messages" not in st.session_state: st.session_state.messages = []
+if "mode" not in st.session_state: st.session_state.mode = "Konversation"
 
+# --- SIDEBAR (Profil & Pfad) ---
 with st.sidebar:
-   st.header(f"🏆 Dein Profil: Level {user_level}")
-   st.write(f"Vokabeln gelernt: {word_count}")
+   st.markdown(f"<div class='user-card'><h3>🦉 HolaLingo</h3><p class='streak-fire'>🔥 Streak: {data['streak']} Tage</p></div>", unsafe_allow_html=True)
+
+   level = (data["xp"] // 100) + 1
+   xp_in_level = data["xp"] % 100
+   st.write(f"**Level {level}**")
+   st.progress(xp_in_level / 100)
+   st.write(f"⭐ {data['xp']} Gesamte XP")
 
    st.divider()
-   st.header("🎮 Modus wählen")
-   app_mode = st.radio("Was möchtest du tun?", ("Konversation", "Lernen (Neue Wörter)"))
-
-   st.divider()
-   st.header("🎤 Mikrofon einstellen")
-   st.write("In welcher Sprache sprichst du gleich?")
-   mic_lang = st.radio("Sprache:", ("Deutsch", "Spanisch"))
-   lang_code = "de" if mic_lang == "Deutsch" else "es"
-
-   st.divider()
-   st.header("📚 Massen-Import")
-   bulk_input = st.text_area("Vokabeln einfügen (mit Komma oder Enter getrennt):", placeholder="el perro, la casa\ncomer, hola")
-   if st.button("➕ Alle Speichern") and bulk_input:
-       added = add_words_bulk(bulk_input)
-       st.success(f"{added} neue Wörter gespeichert! (Duplikate ignoriert)")
+   new_mode = st.radio("Lern-Modus:", ["Konversation", "Lernpfad"])
+   if new_mode != st.session_state.mode:
+       st.session_state.mode = new_mode
+       st.session_state.messages = []
        st.rerun()
 
-   st.divider()
-   if st.button("🗑️ Aktuellen Chat löschen"):
-       if app_mode == "Konversation": st.session_state.chat_conv = []
-       else: st.session_state.chat_learn = []
-       st.rerun()
+   with st.expander("📥 Vokabel-Turbo"):
+       bulk = st.text_area("Wörter hier rein:")
+       if st.button("Importieren"):
+           added = add_words_bulk(bulk)
+           st.success(f"{added} Wörter gelernt!")
+           st.rerun()
 
-# --- HAUPTBEREICH ---
-st.title(f"🇪🇸 HolaBot - {app_mode}")
-if app_mode == "Konversation":
-   st.write(f"Ich spreche nur mit Wörtern, die du kennst. (Level {user_level})")
-else:
-   st.write(f"Lass uns neue Wörter für Level {user_level} lernen!")
+# --- CHAT ---
+st.title(f"📍 {st.session_state.mode}")
 
-# Den richtigen Chat anzeigen
-current_chat = st.session_state.chat_conv if app_mode == "Konversation" else st.session_state.chat_learn
+for m in st.session_state.messages:
+   with st.chat_message(m["role"]):
+       st.write(m["content"])
 
-for msg in current_chat:
-   with st.chat_message(msg["role"]):
-       st.markdown(msg["content"])
-       if msg.get("audio_path") and os.path.exists(msg["audio_path"]):
-           st.audio(msg["audio_path"])
+# INPUT
+audio_bytes = audio_recorder(text="", icon_size="2x", neutral_color="#58cc02")
+prompt = st.chat_input("Schreib HolaBot...")
 
-st.write("---")
-col1, col2 = st.columns([1, 4])
-with col1:
-   st.write("🎤 Sprechen:")
-   audio_bytes = audio_recorder(text="", recording_color="#d32f2f", neutral_color="#4caf50", icon_size="2x")
-with col2:
-   prompt = st.chat_input("...oder tippe etwas ein!")
+user_in = None
+if audio_bytes: user_in = transcribe_audio(audio_bytes, "es") # Standard auf Spanisch für Übung
+if prompt: user_in = prompt
 
-user_text = None
+if user_in:
+   st.session_state.messages.append({"role": "user", "content": user_in})
+   with st.chat_message("user"): st.write(user_in)
 
-if audio_bytes and audio_bytes != st.session_state.last_audio:
-   st.session_state.last_audio = audio_bytes
-   with st.spinner("Höre zu..."):
-       user_text = transcribe_audio(audio_bytes, lang_code)
-
-if prompt:
-   user_text = prompt
-
-if user_text:
-   current_chat.append({"role": "user", "content": user_text})
-   with st.chat_message("user"):
-       st.markdown(user_text)
+   with st.spinner("Lade..."):
+       resp = get_tutor_response(user_in, data, st.session_state.mode)
+       update_xp(10) # 10 XP pro Interaktion
+       audio_p = text_to_speech(resp)
 
    with st.chat_message("assistant"):
-       with st.spinner("HolaBot denkt nach..."):
-           vocab = load_vocab()
-           response = get_spanish_tutor_response(user_text, vocab, app_mode, user_level)
-           st.markdown(response)
+       st.write(resp)
+       if audio_p: st.audio(audio_p, autoplay=True)
 
-           audio_file = text_to_speech(response)
-           if audio_file:
-               st.audio(audio_file, autoplay=True)
-
-   current_chat.append({"role": "assistant", "content": response, "audio_path": audio_file})
+   st.session_state.messages.append({"role": "assistant", "content": resp})
    st.rerun()
