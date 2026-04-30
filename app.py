@@ -1,159 +1,192 @@
 import streamlit as st
-import os
-from data_manager import (load_data, save_data, add_words_bulk, delete_word, 
-                          get_unit_structure, check_streak, get_smart_words)
-from ai_manager import get_ai_response, transcribe_audio, text_to_speech
-from audio_recorder_streamlit import audio_recorder
+import time
+from data_manager import (load_user_data, save_user_data, check_daily_streak, 
+                          update_progress, handle_wrong_answer, refill_hearts, buy_premium)
+from ai_manager import generate_lesson_exercise, text_to_speech
 
-# --- DESIGN SETUP ---
-st.set_page_config(page_title="PeakLingo", layout="wide")
+# --- CONFIG & CSS ---
+st.set_page_config(page_title="LingoApp Clone", page_icon="🦉", layout="centered")
 
-def local_css():
-    st.markdown("""
-    <style>
-    .main { background-color: #f8fafc; }
-    /* HabitPeak Card Design */
-    .peak-card {
-        background: #ffffff;
-        padding: 25px;
-        border-radius: 24px;
-        box-shadow: 10px 10px 30px #d1d9e6, -10px -10px 30px #ffffff;
-        margin-bottom: 25px;
-        border: 1px solid rgba(255,255,255,0.3);
+st.markdown("""
+<style>
+    .top-bar {
+        display: flex; justify-content: space-between; align-items: center;
+        background-color: white; padding: 10px 20px; border-radius: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 30px; font-weight: bold;
     }
-    .stat-card { text-align: center; }
-    .stat-val { font-size: 32px; font-weight: 800; color: #1e293b; }
-    .stat-label { font-size: 12px; text-transform: uppercase; color: #64748b; letter-spacing: 1px; }
+    .stat-item { display: flex; align-items: center; gap: 5px; font-size: 1.1rem; }
+    .heart-icon { color: #ff4b4b; }
+    .gem-icon { color: #1cb0f6; }
+    .streak-icon { color: #ff9600; }
     
-    /* Lernpfad Nodes */
-    .node-container { display: flex; flex-direction: column; align-items: center; }
-    .unit-node {
-        width: 70px; height: 70px; border-radius: 35px;
-        display: flex; align-items: center; justify-content: center;
-        font-weight: bold; margin: 10px 0; border: 4px solid #fff;
+    /* Lernpfad Design */
+    .path-container { display: flex; flex-direction: column; align-items: center; margin-top: 20px; }
+    .path-node {
+        width: 80px; height: 80px; border-radius: 50%; display: flex; 
+        align-items: center; justify-content: center; font-size: 24px; font-weight: bold;
+        color: white; cursor: pointer; border: 5px solid rgba(255,255,255,0.5);
+        box-shadow: 0 6px 0 rgba(0,0,0,0.1); margin: 15px 0; z-index: 2; position: relative;
     }
-    .node-done { background-color: #10b981; color: white; box-shadow: 0 4px 15px rgba(16,185,129,0.3); }
-    .node-active { background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; transform: scale(1.1); box-shadow: 0 8px 20px rgba(59,130,246,0.4); }
-    .node-locked { background-color: #e2e8f0; color: #94a3b8; }
-    .path-line { width: 6px; height: 30px; background-color: #e2e8f0; }
-    .line-active { background-color: #3b82f6; }
-    </style>
-    """, unsafe_allow_html=True)
-
-local_css()
-
-# --- INITIALISIERUNG ---
-data = check_streak()
-if "msgs_learn" not in st.session_state: st.session_state.msgs_learn = []
-if "msgs_sandbox" not in st.session_state: st.session_state.msgs_sandbox = []
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.markdown("## 🏔️ PeakLingo")
-    st.divider()
+    .node-done { background-color: #58cc02; box-shadow: 0 6px 0 #46a302; }
+    .node-active { background-color: #ce82ff; box-shadow: 0 6px 0 #a561d1; transform: scale(1.1); }
+    .node-locked { background-color: #e5e5e5; color: #afafaf; box-shadow: 0 6px 0 #cecece; }
+    .path-line { width: 10px; height: 50px; background-color: #e5e5e5; margin: -20px 0; z-index: 1; }
+    .line-done { background-color: #58cc02; }
     
-    with st.expander("📥 Vokabel-Tresor"):
-        cat = st.selectbox("Kategorie", ["Reise", "Essen", "Geschäfte", "Verwandte", "Allgemein"])
-        bulk = st.text_area("Bulk Import (Kommagetrennt)")
-        if st.button("Hinzufügen"):
-            count = add_words_bulk(bulk, cat)
-            st.success(f"{count} Wörter importiert!")
-            st.rerun()
-            
-    st.markdown("### 📚 Dein Wortschatz")
-    f_cat = st.selectbox("Filter", ["Alle", "Reise", "Essen", "Geschäfte", "Verwandte", "Allgemein"])
-    for v in data["vocab"]:
-        if f_cat == "Alle" or v["cat"] == f_cat:
-            c1, c2 = st.columns([4, 1])
-            c1.caption(f"{v['word']} ({v['cat']})")
-            if c2.button("🗑️", key=f"del_{v['word']}"):
-                delete_word(v['word'])
-                st.rerun()
+    .stButton>button { width: 100%; border-radius: 15px; font-weight: bold; padding: 10px; }
+</style>
+""", unsafe_allow_html=True)
 
-# --- HEADER STATS ---
-col1, col2, col3 = st.columns(3)
-with col1: st.markdown(f"<div class='peak-card stat-card'><div class='stat-label'>Erfahrung</div><div class='stat-val'>⭐ {data['xp']}</div></div>", unsafe_allow_html=True)
-with col2: st.markdown(f"<div class='peak-card stat-card'><div class='stat-label'>Streak</div><div class='stat-val'>🔥 {data['streak']}</div></div>", unsafe_allow_html=True)
-with col3: st.markdown(f"<div class='peak-card stat-card'><div class='stat-label'>Wortschatz</div><div class='stat-val'>📚 {len(data['vocab'])}</div></div>", unsafe_allow_html=True)
+# --- STATE INITIALIZATION ---
+if "user_data" not in st.session_state:
+    raw_data = load_user_data()
+    st.session_state.user_data = check_daily_streak(raw_data)
+if "active_lesson" not in st.session_state:
+    st.session_state.active_lesson = None
+if "current_exercise" not in st.session_state:
+    st.session_state.current_exercise = None
 
-# --- TABS ---
-t_path, t_sandbox = st.tabs(["📍 Lernpfad", "💬 Sandbox"])
+data = st.session_state.user_data
+hearts_display = "♾️" if data["premium"] else str(data["hearts"])
 
-with t_path:
-    cp_path, cp_chat = st.columns([1, 3])
-    units = get_unit_structure()
-    curr_u_idx = data["completed_lessons"] // 5
+# --- TOP STATUS BAR ---
+st.markdown(f"""
+<div class="top-bar">
+    <div class="stat-item"><span style="font-size: 1.5rem;">🇪🇸</span> Spanisch</div>
+    <div class="stat-item streak-icon">🔥 {data['streak']}</div>
+    <div class="stat-item gem-icon">💎 {data['gems']}</div>
+    <div class="stat-item heart-icon">❤️ {hearts_display}</div>
+</div>
+""", unsafe_allow_html=True)
 
-    with cp_path:
-        st.markdown("<div class='node-container'>", unsafe_allow_html=True)
-        for i in range(len(units) + 1):
-            if i < curr_u_idx:
-                st.markdown("<div class='unit-node node-done'>✓</div>", unsafe_allow_html=True)
-            elif i == curr_u_idx:
-                st.markdown("<div class='unit-node node-active'>HIER</div>", unsafe_allow_html=True)
-            else:
-                st.markdown("<div class='unit-node node-locked'>LOCKED</div>", unsafe_allow_html=True)
-            if i < len(units):
-                st.markdown(f"<div class='path-line {'line-active' if i < curr_u_idx else ''}'></div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+# --- TABS (Home, Shop, Profil) ---
+tab_home, tab_shop, tab_profile = st.tabs(["🏠 Lernpfad", "🛒 Shop", "🛡️ Profil"])
 
-    with cp_chat:
-        if not units or curr_u_idx >= len(units):
-            st.warning("Füge mehr Wörter hinzu, um den Pfad zu generieren!")
-        else:
-            u_words = units[curr_u_idx]["words"]
-            l_types = ["Einführung", "Übung", "Hörverstehen", "Sprech-Test", "Master-Test"]
-            curr_type = l_types[data["completed_lessons"] % 5]
-            
-            st.markdown(f"<div class='peak-card'><b>Lektion:</b> {curr_type} <br> <b>Wörter:</b> {', '.join(u_words)}</div>", unsafe_allow_html=True)
-            
-            for m in st.session_state.msgs_learn:
-                with st.chat_message(m["role"]): st.write(m["content"])
-            
-            aud = audio_recorder(text="Sprechen", icon_size="2x", neutral_color="#3b82f6", key="rec_l")
-            txt = st.chat_input("Schreibe hier...")
-            
-            final_in = txt
-            if aud: final_in = transcribe_audio(aud, "es")
-            
-            if final_in:
-                st.session_state.msgs_learn.append({"role": "user", "content": final_in})
-                resp = get_ai_response(final_in, "Lernen", {"type": curr_type, "words": u_words}, st.session_state.msgs_learn)
-                st.session_state.msgs_learn.append({"role": "assistant", "content": resp})
-                
-                # Progress Update
-                data["xp"] += 20
-                today_str = str(date.today())
-                if data["last_login"] != today_str:
-                    data["streak"] += 1
-                    data["last_login"] = today_str
-                save_data(data)
-                st.rerun()
-            
-            if st.button("Lektion beendet ✅"):
-                data["completed_lessons"] += 1
-                save_data(data)
-                st.session_state.msgs_learn = []
-                st.balloons()
-                st.rerun()
-
-with t_sandbox:
-    st.markdown("<div class='peak-card'>Hier nutzt die KI nur Wörter aus deinem Tresor. Fehler werden auf Deutsch erklärt.</div>", unsafe_allow_html=True)
-    for m in st.session_state.msgs_sandbox:
-        with st.chat_message(m["role"]): st.write(m["content"])
-    
-    aud_s = audio_recorder(text="Sprechen", icon_size="2x", neutral_color="#10b981", key="rec_s")
-    txt_s = st.chat_input("Plaudere auf Spanisch...")
-    
-    final_s = txt_s
-    if aud_s: final_s = transcribe_audio(aud_s, "es")
-    
-    if final_s:
-        st.session_state.msgs_sandbox.append({"role": "user", "content": final_s})
-        v_list = [v["word"] for v in data["vocab"]]
-        resp_s = get_ai_response(final_s, "Sandbox", {"vocab": v_list}, st.session_state.msgs_sandbox)
-        st.session_state.msgs_sandbox.append({"role": "assistant", "content": resp_s})
+with tab_home:
+    if st.session_state.active_lesson is None:
+        st.subheader(f"Unit {data['current_unit']}: Spanisch Basics")
         
-        audio_file = text_to_speech(resp_s)
-        if audio_file: st.audio(audio_file, autoplay=True)
-        st.rerun()
+        # Zeichne den Lernpfad (5 Knoten pro Unit)
+        st.markdown('<div class="path-container">', unsafe_allow_html=True)
+        for i in range(1, 6):
+            # Bestimme den Status des Knotens
+            if i < data["current_lesson"]:
+                state_class = "node-done"
+                icon = "⭐"
+                is_disabled = True
+            elif i == data["current_lesson"]:
+                state_class = "node-active"
+                icon = "🚀"
+                is_disabled = False
+            else:
+                state_class = "node-locked"
+                icon = "🔒"
+                is_disabled = True
+            
+            # Button Rendern (versteckter Streamlit Button über dem CSS)
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.markdown(f'<div class="path-node {state_class}">{icon}</div>', unsafe_allow_html=True)
+                if not is_disabled:
+                    if st.button(f"Lektion {i} Starten", use_container_width=True):
+                        if data["hearts"] > 0 or data["premium"]:
+                            st.session_state.active_lesson = i
+                            st.rerun()
+                        else:
+                            st.error("Du hast keine Herzen mehr! Gehe in den Shop.")
+            
+            # Pfad-Linie zeichnen (außer beim letzten Element)
+            if i < 5:
+                line_class = "line-done" if i < data["current_lesson"] else ""
+                st.markdown(f'<div class="path-line {line_class}"></div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    else:
+        # --- AKTIVE LEKTION ---
+        st.header(f"Lektion {st.session_state.active_lesson}")
+        
+        if st.session_state.current_exercise is None:
+            with st.spinner("KI generiert Übung..."):
+                st.session_state.current_exercise = generate_lesson_exercise(
+                    data["current_unit"], 
+                    st.session_state.active_lesson, 
+                    data["known_words"]
+                )
+                
+        exercise = st.session_state.current_exercise
+        st.info(exercise.get("question", "Übersetze diesen Satz:"))
+        
+        # Audio Button
+        if "spanish_text" in exercise:
+            audio_file = text_to_speech(exercise["spanish_text"])
+            if audio_file:
+                st.audio(audio_file)
+        
+        user_answer = st.text_input("Deine Antwort:", key="user_ans")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Antwort Prüfen", type="primary"):
+                if not user_answer:
+                    st.warning("Bitte gib eine Antwort ein.")
+                else:
+                    correct = str(exercise.get("correct_answer", "")).strip().lower()
+                    if user_answer.strip().lower() == correct:
+                        st.success("🎉 Richtig! +15 XP")
+                        st.session_state.user_data = update_progress(data, 15, st.session_state.active_lesson)
+                        st.session_state.active_lesson = None
+                        st.session_state.current_exercise = None
+                        time.sleep(1.5)
+                        st.rerun()
+                    else:
+                        st.error(f"Falsch! Die richtige Antwort war: **{exercise.get('correct_answer')}**")
+                        st.session_state.user_data = handle_wrong_answer(data)
+                        if st.session_state.user_data["hearts"] <= 0 and not data["premium"]:
+                            st.warning("💔 Keine Herzen mehr! Lektion abgebrochen.")
+                            st.session_state.active_lesson = None
+                            st.session_state.current_exercise = None
+                            time.sleep(2)
+                            st.rerun()
+        with col2:
+            if st.button("Abbrechen"):
+                st.session_state.active_lesson = None
+                st.session_state.current_exercise = None
+                st.rerun()
+
+with tab_shop:
+    st.header("🛒 Lingo-Shop")
+    st.write("Gib deine hart verdienten Gems aus!")
+    
+    sc1, sc2 = st.columns(2)
+    with sc1:
+        st.markdown("### ❤️ Herzen auffüllen")
+        st.write("Kosten: 350 Gems")
+        if st.button("Kaufen (350)", key="buy_hearts"):
+            if refill_hearts(data, 350):
+                st.success("Herzen komplett aufgefüllt!")
+                st.rerun()
+            else:
+                st.error("Nicht genug Gems oder Herzen sind bereits voll.")
+                
+    with sc2:
+        st.markdown("### 🌟 Super Lingo")
+        st.write("Unbegrenzte Herzen für immer!")
+        st.write("Kosten: 1000 Gems")
+        if data["premium"]:
+            st.success("Bereits freigeschaltet!")
+        else:
+            if st.button("Aktivieren (1000)", key="buy_super"):
+                if buy_premium(data, 1000):
+                    st.balloons()
+                    st.success("Super Lingo aktiviert!")
+                    st.rerun()
+                else:
+                    st.error("Nicht genug Gems!")
+
+with tab_profile:
+    st.header("🛡️ Dein Profil")
+    st.metric("Gesammelte XP", data["xp"])
+    st.metric("Aktueller Streak", f"{data['streak']} Tage")
+    st.metric("Premium Status", "Aktiv" if data["premium"] else "Inaktiv")
+    st.write("### Bekannte Wörter")
+    st.write(", ".join(data["known_words"]))
