@@ -1,67 +1,95 @@
 import json
 import os
-from datetime import date
+from datetime import date, datetime, timedelta
 
-DB_FILE = "holalingo_ultimate.json"
+DB_FILE = "habitpeak_storage.json"
 
 def load_data():
-    """Lädt alle Nutzerdaten und setzt Standardwerte, falls leer."""
     if os.path.exists(DB_FILE):
         try:
-            with open(DB_FILE, "r") as f:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                defaults = {"vocab": [], "path_xp": 0, "streak": 0, "last_login": "", "completed_lessons": 0}
-                for k, v in defaults.items():
-                    if k not in data: data[k] = v
+                # Validierung der Felder für Robustheit
+                fields = ["vocab", "xp", "streak", "last_login", "completed_lessons", "stats"]
+                for field in fields:
+                    if field not in data:
+                        if field == "vocab": data[field] = []
+                        elif field == "stats": data[field] = {"total_errors": 0}
+                        else: data[field] = 0
                 return data
         except Exception:
             pass
-    return {"vocab": [], "path_xp": 0, "streak": 0, "last_login": "", "completed_lessons": 0}
+    return {
+        "vocab": [], 
+        "xp": 0, 
+        "streak": 0, 
+        "last_login": "", 
+        "completed_lessons": 0,
+        "stats": {"total_errors": 0}
+    }
 
 def save_data(data):
-    """Speichert die Daten sicher in der JSON."""
-    with open(DB_FILE, "w") as f:
-        json.dump(data, f)
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
 
-def add_words_bulk(text_input):
-    """Fügt viele neue Wörter hinzu und filtert Duplikate."""
+def add_words_bulk(text_input, category="Allgemein"):
     data = load_data()
-    raw_words = text_input.replace("\n", ",").split(",")
-    new_entries = [w.strip() for w in raw_words if w.strip()]
-    before = len(data["vocab"])
-    data["vocab"] = list(set(data["vocab"] + new_entries))
-    save_data(data)
-    return len(data["vocab"]) - before
-
-def delete_word(word_to_remove):
-    """Löscht ein spezifisches Wort aus dem Wortschatz."""
-    data = load_data()
-    data["vocab"] = [w for w in data["vocab"] if w != word_to_remove]
-    save_data(data)
-
-def get_units():
-    """Generiert den Lernpfad dynamisch basierend auf dem Wortschatz (5 Wörter = 1 Unit)."""
-    data = load_data()
-    words = data["vocab"]
-    units = []
-    for i in range(0, len(words), 5):
-        unit_words = words[i:i+5]
-        units.append({"id": (i//5)+1, "words": unit_words})
-    return units
-
-def update_xp_and_streak(xp_amount):
-    """Verwaltet den Streak und fügt XP hinzu."""
-    data = load_data()
-    data["path_xp"] += xp_amount
+    raw_list = text_input.replace("\n", ",").split(",")
+    added_count = 0
+    existing_words = [v["word"].lower() for v in data["vocab"]]
     
-    today = str(date.today())
-    if data["last_login"] != today:
-        yesterday = str(date.fromordinal(date.today().toordinal()-1))
-        if data["last_login"] == yesterday:
-            data["streak"] += 1
-        else:
-            data["streak"] = 1
-        data["last_login"] = today
-        
+    for word in raw_list:
+        clean_word = word.strip().lower()
+        if clean_word and clean_word not in existing_words:
+            data["vocab"].append({
+                "word": clean_word,
+                "cat": category,
+                "errors": 0,
+                "success": 0,
+                "added_at": str(date.today())
+            })
+            added_count += 1
+    save_data(data)
+    return added_count
+
+def delete_word(word_to_del):
+    data = load_data()
+    data["vocab"] = [v for v in data["vocab"] if v["word"] != word_to_del]
+    save_data(data)
+
+def check_streak():
+    data = load_data()
+    today = date.today()
+    if not data["last_login"]:
+        return data
+
+    last_date = datetime.strptime(data["last_login"], "%Y-%m-%d").date()
+    diff = (today - last_date).days
+
+    if diff == 1:
+        # Streak gehalten - wird beim ersten XP-Gewinn erhöht
+        pass 
+    elif diff > 1:
+        # Streak verloren
+        data["streak"] = 0
+    
     save_data(data)
     return data
+
+def get_smart_words(limit=5):
+    data = load_data()
+    # Sortiert nach Fehlern (absteigend) und Erfolg (aufsteigend)
+    sorted_vocab = sorted(data["vocab"], key=lambda x: (x["errors"], -x["success"]), reverse=True)
+    return [v["word"] for v in sorted_vocab[:limit]]
+
+def get_unit_structure():
+    data = load_data()
+    all_words = [v["word"] for v in data["vocab"]]
+    units = []
+    # 5 Wörter bilden eine Lerneinheit
+    for i in range(0, len(all_words), 5):
+        units.append({
+            "id": (i // 5) + 1,
+            "words": all_words[i:i+5]
+        })
+    return units
