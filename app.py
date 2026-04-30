@@ -1,261 +1,159 @@
 import streamlit as st
 import os
-from data_manager import load_data, save_data, add_words_bulk, delete_word, get_units, update_xp_and_streak
-from ai_manager import get_smart_response, text_to_speech, transcribe_audio
+from data_manager import (load_data, save_data, add_words_bulk, delete_word, 
+                          get_unit_structure, check_streak, get_smart_words)
+from ai_manager import get_ai_response, transcribe_audio, text_to_speech
 from audio_recorder_streamlit import audio_recorder
 
-# ==========================================
-# 1. SEITEN-SETUP & PREMIUM CSS (HabitPeak)
-# ==========================================
-st.set_page_config(page_title="HolaLingo Peak", page_icon="🏔️", layout="wide")
+# --- DESIGN SETUP ---
+st.set_page_config(page_title="PeakLingo", layout="wide")
 
-st.markdown("""
-<style>
-    /* Hintergrund und generelle Schrift */
-    [data-testid="stAppViewContainer"] { background-color: #f3f4f6; font-family: 'Inter', sans-serif; }
-    
-    /* HabitPeak Cards */
-    .peak-card { 
-        background: #ffffff; padding: 25px; border-radius: 20px; 
-        box-shadow: 0 10px 25px rgba(0,0,0,0.03); border: 1px solid #e5e7eb; 
-        margin-bottom: 20px; text-align: center; transition: all 0.3s ease;
+def local_css():
+    st.markdown("""
+    <style>
+    .main { background-color: #f8fafc; }
+    /* HabitPeak Card Design */
+    .peak-card {
+        background: #ffffff;
+        padding: 25px;
+        border-radius: 24px;
+        box-shadow: 10px 10px 30px #d1d9e6, -10px -10px 30px #ffffff;
+        margin-bottom: 25px;
+        border: 1px solid rgba(255,255,255,0.3);
     }
-    .peak-card:hover { transform: translateY(-3px); box-shadow: 0 15px 30px rgba(0,0,0,0.06); }
+    .stat-card { text-align: center; }
+    .stat-val { font-size: 32px; font-weight: 800; color: #1e293b; }
+    .stat-label { font-size: 12px; text-transform: uppercase; color: #64748b; letter-spacing: 1px; }
     
-    /* Stat-Texte */
-    .stat-value { font-size: 36px; font-weight: 900; color: #111827; margin-bottom: 5px; }
-    .stat-label { font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 1.5px; }
-    
-    /* Lernpfad Nodes (Kreise) */
-    .path-container { display: flex; flex-direction: column; align-items: center; padding: 20px 0; }
-    .unit-node { 
-        width: 70px; height: 70px; border-radius: 50%; display: flex; 
-        align-items: center; justify-content: center; font-weight: 800; font-size: 18px;
-        margin: 10px 0; position: relative; z-index: 2; transition: all 0.3s;
+    /* Lernpfad Nodes */
+    .node-container { display: flex; flex-direction: column; align-items: center; }
+    .unit-node {
+        width: 70px; height: 70px; border-radius: 35px;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: bold; margin: 10px 0; border: 4px solid #fff;
     }
-    .node-active { background: linear-gradient(135deg, #10b981 0%, #047857 100%); color: white; box-shadow: 0 0 20px rgba(16, 185, 129, 0.5); border: 4px solid #d1fae5; }
-    .node-done { background: #10b981; color: white; border: 4px solid #fff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .node-locked { background: #e5e7eb; color: #9ca3af; border: 4px solid #f3f4f6; }
-    
-    /* Verbindungslinien im Pfad */
-    .path-line { width: 6px; height: 40px; background: #e5e7eb; margin: -15px 0; z-index: 1; }
-    .line-done { background: #10b981; }
-    
-    /* Buttons */
-    .stButton>button { border-radius: 12px; font-weight: 600; transition: 0.2s; }
-</style>
-""", unsafe_allow_html=True)
+    .node-done { background-color: #10b981; color: white; box-shadow: 0 4px 15px rgba(16,185,129,0.3); }
+    .node-active { background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; transform: scale(1.1); box-shadow: 0 8px 20px rgba(59,130,246,0.4); }
+    .node-locked { background-color: #e2e8f0; color: #94a3b8; }
+    .path-line { width: 6px; height: 30px; background-color: #e2e8f0; }
+    .line-active { background-color: #3b82f6; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# ==========================================
-# 2. DATEN & SESSION STATE INIT
-# ==========================================
-data = load_data()
-units = get_units()
+local_css()
 
-if "chat_conv" not in st.session_state: st.session_state.chat_conv = []
-if "chat_learn" not in st.session_state: st.session_state.chat_learn = []
-if "last_audio_conv" not in st.session_state: st.session_state.last_audio_conv = None
-if "last_audio_learn" not in st.session_state: st.session_state.last_audio_learn = None
+# --- INITIALISIERUNG ---
+data = check_streak()
+if "msgs_learn" not in st.session_state: st.session_state.msgs_learn = []
+if "msgs_sandbox" not in st.session_state: st.session_state.msgs_sandbox = []
 
-# Berechnungen für den Fortschritt
-current_unit_index = data['completed_lessons'] // 5
-current_lesson_in_unit = data['completed_lessons'] % 5
-lesson_types = ["NEU LERNEN 1", "NEU LERNEN 2", "WIEDERHOLUNG", "HÖREN", "MASTER-TEST"]
-current_lesson_type = lesson_types[current_lesson_in_unit]
-
-# ==========================================
-# 3. SIDEBAR: EINSTELLUNGEN & WORT-TRESOR
-# ==========================================
+# --- SIDEBAR ---
 with st.sidebar:
-    st.markdown("<h1 style='text-align: center; color: #10b981;'>🏔️ PeakLingo</h1>", unsafe_allow_html=True)
+    st.markdown("## 🏔️ PeakLingo")
     st.divider()
     
-    # Spracheinstellung fürs Mikrofon
-    st.markdown("### 🎙️ Mikrofon Sprache")
-    mic_lang = st.radio("Was sprichst du gleich?", ["Spanisch", "Deutsch"], horizontal=True)
-    lang_code = "de" if mic_lang == "Deutsch" else "es"
-    
-    st.divider()
-    
-    # Der Vokabel-Tresor (Ansehen & Löschen)
-    st.markdown(f"### 📚 Mein Tresor ({len(data['vocab'])} Wörter)")
-    with st.expander("Wörter verwalten"):
-        if not data["vocab"]:
-            st.info("Noch keine Wörter vorhanden.")
-        else:
-            for w in sorted(data["vocab"]):
-                col1, col2 = st.columns([4, 1])
-                col1.write(f"**{w}**")
-                if col2.button("❌", key=f"del_{w}"):
-                    delete_word(w)
-                    st.rerun()
-                    
-    # Bulk Import
-    st.markdown("### 📥 Massen-Import")
-    bulk_input = st.text_area("Wörter einfügen (mit Komma getrennt):", placeholder="el gato, el perro, comer...")
-    if st.button("🚀 Speichern") and bulk_input:
-        added = add_words_bulk(bulk_input)
-        st.success(f"{added} neue Wörter gespeichert!")
-        st.rerun()
-        
-    st.divider()
-    if st.button("🗑️ Chats leeren"):
-        st.session_state.chat_conv = []
-        st.session_state.chat_learn = []
-        st.rerun()
+    with st.expander("📥 Vokabel-Tresor"):
+        cat = st.selectbox("Kategorie", ["Reise", "Essen", "Geschäfte", "Verwandte", "Allgemein"])
+        bulk = st.text_area("Bulk Import (Kommagetrennt)")
+        if st.button("Hinzufügen"):
+            count = add_words_bulk(bulk, cat)
+            st.success(f"{count} Wörter importiert!")
+            st.rerun()
+            
+    st.markdown("### 📚 Dein Wortschatz")
+    f_cat = st.selectbox("Filter", ["Alle", "Reise", "Essen", "Geschäfte", "Verwandte", "Allgemein"])
+    for v in data["vocab"]:
+        if f_cat == "Alle" or v["cat"] == f_cat:
+            c1, c2 = st.columns([4, 1])
+            c1.caption(f"{v['word']} ({v['cat']})")
+            if c2.button("🗑️", key=f"del_{v['word']}"):
+                delete_word(v['word'])
+                st.rerun()
 
-# ==========================================
-# 4. TOP-DASHBOARD (HabitPeak Stats)
-# ==========================================
-c1, c2, c3 = st.columns(3)
-c1.markdown(f"<div class='peak-card'><div class='stat-value'>⭐ {data['path_xp']}</div><div class='stat-label'>Gesamt XP</div></div>", unsafe_allow_html=True)
-c2.markdown(f"<div class='peak-card'><div class='stat-value'>🔥 {data['streak']}</div><div class='stat-label'>Tage Streak</div></div>", unsafe_allow_html=True)
-c3.markdown(f"<div class='peak-card'><div class='stat-value'>📖 {len(data['vocab'])}</div><div class='stat-label'>Wörter im Tresor</div></div>", unsafe_allow_html=True)
+# --- HEADER STATS ---
+col1, col2, col3 = st.columns(3)
+with col1: st.markdown(f"<div class='peak-card stat-card'><div class='stat-label'>Erfahrung</div><div class='stat-val'>⭐ {data['xp']}</div></div>", unsafe_allow_html=True)
+with col2: st.markdown(f"<div class='peak-card stat-card'><div class='stat-label'>Streak</div><div class='stat-val'>🔥 {data['streak']}</div></div>", unsafe_allow_html=True)
+with col3: st.markdown(f"<div class='peak-card stat-card'><div class='stat-label'>Wortschatz</div><div class='stat-val'>📚 {len(data['vocab'])}</div></div>", unsafe_allow_html=True)
 
-# ==========================================
-# 5. HAUPTBEREICH (TABS)
-# ==========================================
-tab1, tab2 = st.tabs(["📍 LERNPFAD (Sammle XP)", "💬 FREIE KONVERSATION (Strenge KI)"])
+# --- TABS ---
+t_path, t_sandbox = st.tabs(["📍 Lernpfad", "💬 Sandbox"])
 
-# ------------------------------------------
-# TAB 1: DER LERNPFAD
-# ------------------------------------------
-with tab1:
-    col_path, col_action = st.columns([1, 3])
-    
-    # LINKE SPALTE: Visueller Pfad
-    with col_path:
-        st.markdown("<h3 style='text-align: center;'>Dein Weg</h3>", unsafe_allow_html=True)
-        st.markdown("<div class='path-container'>", unsafe_allow_html=True)
-        
-        if not units:
-            st.warning("Importiere Wörter in der Sidebar, um Units zu generieren!")
-        else:
-            for i, u in enumerate(units):
-                is_done = i < current_unit_index
-                is_active = i == current_unit_index
-                
-                if is_done: style = "node-done"
-                elif is_active: style = "node-active"
-                else: style = "node-locked"
-                
-                label = "✅" if is_done else f"U{u['id']}"
-                st.markdown(f"<div class='unit-node {style}'>{label}</div>", unsafe_allow_html=True)
-                
-                # Linie zwischen den Nodes zeichnen (außer beim letzten)
-                if i < len(units) - 1:
-                    line_style = "line-done" if is_done else ""
-                    st.markdown(f"<div class='path-line {line_style}'></div>", unsafe_allow_html=True)
-                    
+with t_path:
+    cp_path, cp_chat = st.columns([1, 3])
+    units = get_unit_structure()
+    curr_u_idx = data["completed_lessons"] // 5
+
+    with cp_path:
+        st.markdown("<div class='node-container'>", unsafe_allow_html=True)
+        for i in range(len(units) + 1):
+            if i < curr_u_idx:
+                st.markdown("<div class='unit-node node-done'>✓</div>", unsafe_allow_html=True)
+            elif i == curr_u_idx:
+                st.markdown("<div class='unit-node node-active'>HIER</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div class='unit-node node-locked'>LOCKED</div>", unsafe_allow_html=True)
+            if i < len(units):
+                st.markdown(f"<div class='path-line {'line-active' if i < curr_u_idx else ''}'></div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # RECHTE SPALTE: Aktuelle Lektion
-    with col_action:
-        if units:
-            # Sicherheits-Check, falls alle Units beendet sind
-            if current_unit_index >= len(units):
-                st.success("🎉 Du hast alle aktuellen Units abgeschlossen! Füge neue Wörter hinzu.")
-            else:
-                active_unit = units[current_unit_index]
-                words_str = ", ".join(active_unit['words'])
-                
-                # Lektions-Kopf
-                st.markdown(f"""
-                <div class='peak-card' style='text-align: left;'>
-                    <h2 style='color: #10b981;'>Unit {active_unit['id']} - Lektion {current_lesson_in_unit + 1}/5</h2>
-                    <h4>Fokus: {current_lesson_type}</h4>
-                    <p style='color: #6b7280;'>Diese Wörter sind relevant: <b>{words_str}</b></p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Chat-Verlauf Rendern
-                for msg in st.session_state.chat_learn:
-                    with st.chat_message(msg["role"]): st.markdown(msg["content"])
-                
-                # Eingabe (Audio & Text)
-                st.write("---")
-                rc1, rc2 = st.columns([1, 6])
-                with rc1: 
-                    audio_learn = audio_recorder(text="", icon_size="2x", neutral_color="#10b981")
-                with rc2: 
-                    text_learn = st.chat_input("Deine Antwort für den Lernpfad...")
-                
-                user_input_learn = None
-                if audio_learn and audio_learn != st.session_state.last_audio_learn:
-                    st.session_state.last_audio_learn = audio_learn
-                    with st.spinner("Transkribiere..."):
-                        user_input_learn = transcribe_audio(audio_learn, lang_code)
-                if text_learn: user_input_learn = text_learn
-                
-                # KI Antwort verarbeiten
-                if user_input_learn:
-                    st.session_state.chat_learn.append({"role": "user", "content": user_input_learn})
-                    with st.chat_message("user"): st.markdown(user_input_learn)
-                    
-                    with st.spinner("HolaBot wertet aus..."):
-                        ctx = {"lesson_type": current_lesson_type, "unit_words": words_str}
-                        resp = get_smart_response(user_input_learn, "Lernpfad", ctx, st.session_state.chat_learn)
-                        
-                        # XP vergeben!
-                        update_xp_and_streak(20)
-                        
-                        audio_path = text_to_speech(resp)
-                    
-                    with st.chat_message("assistant"):
-                        st.markdown(resp)
-                        if audio_path: st.audio(audio_path, autoplay=True)
-                    
-                    st.session_state.chat_learn.append({"role": "assistant", "content": resp})
-                    st.rerun()
-
-                # Button um in der Unit weiterzugehen
-                if st.button("Lektion erfolgreich abgeschlossen? Nächste! ➡️", use_container_width=True):
-                    data["completed_lessons"] += 1
-                    save_data(data)
-                    st.session_state.chat_learn = [] # Chat reset für saubere neue Lektion
-                    st.balloons()
-                    st.rerun()
-
-# ------------------------------------------
-# TAB 2: FREIE KONVERSATION
-# ------------------------------------------
-with tab2:
-    st.markdown("""
-    <div class='peak-card'>
-        <h3>Freies Training</h3>
-        <p>Hier gibt es keine XP. Die KI spricht mit dir <b>ausschließlich</b> mit den Wörtern aus deinem Tresor und korrigiert dich auf Deutsch.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    for msg in st.session_state.chat_conv:
-        with st.chat_message(msg["role"]): st.markdown(msg["content"])
-        
-    st.write("---")
-    cc1, cc2 = st.columns([1, 6])
-    with cc1: 
-        audio_conv = audio_recorder(text="", icon_size="2x", neutral_color="#3b82f6")
-    with cc2: 
-        text_conv = st.chat_input("Plaudere auf Spanisch...")
-        
-    user_input_conv = None
-    if audio_conv and audio_conv != st.session_state.last_audio_conv:
-        st.session_state.last_audio_conv = audio_conv
-        with st.spinner("Höre zu..."):
-            user_input_conv = transcribe_audio(audio_conv, lang_code)
-    if text_conv: user_input_conv = text_conv
-    
-    if user_input_conv:
-        st.session_state.chat_conv.append({"role": "user", "content": user_input_conv})
-        with st.chat_message("user"): st.markdown(user_input_conv)
-        
-        with st.spinner("HolaBot tippt..."):
-            ctx = {"vocab": data["vocab"]}
-            resp_conv = get_smart_response(user_input_conv, "Konversation", ctx, st.session_state.chat_conv)
-            audio_path_conv = text_to_speech(resp_conv)
+    with cp_chat:
+        if not units or curr_u_idx >= len(units):
+            st.warning("Füge mehr Wörter hinzu, um den Pfad zu generieren!")
+        else:
+            u_words = units[curr_u_idx]["words"]
+            l_types = ["Einführung", "Übung", "Hörverstehen", "Sprech-Test", "Master-Test"]
+            curr_type = l_types[data["completed_lessons"] % 5]
             
-        with chat_msg := st.chat_message("assistant"):
-            st.markdown(resp_conv)
-            if audio_path_conv: st.audio(audio_path_conv, autoplay=True)
+            st.markdown(f"<div class='peak-card'><b>Lektion:</b> {curr_type} <br> <b>Wörter:</b> {', '.join(u_words)}</div>", unsafe_allow_html=True)
             
-        st.session_state.chat_conv.append({"role": "assistant", "content": resp_conv})
+            for m in st.session_state.msgs_learn:
+                with st.chat_message(m["role"]): st.write(m["content"])
+            
+            aud = audio_recorder(text="Sprechen", icon_size="2x", neutral_color="#3b82f6", key="rec_l")
+            txt = st.chat_input("Schreibe hier...")
+            
+            final_in = txt
+            if aud: final_in = transcribe_audio(aud, "es")
+            
+            if final_in:
+                st.session_state.msgs_learn.append({"role": "user", "content": final_in})
+                resp = get_ai_response(final_in, "Lernen", {"type": curr_type, "words": u_words}, st.session_state.msgs_learn)
+                st.session_state.msgs_learn.append({"role": "assistant", "content": resp})
+                
+                # Progress Update
+                data["xp"] += 20
+                today_str = str(date.today())
+                if data["last_login"] != today_str:
+                    data["streak"] += 1
+                    data["last_login"] = today_str
+                save_data(data)
+                st.rerun()
+            
+            if st.button("Lektion beendet ✅"):
+                data["completed_lessons"] += 1
+                save_data(data)
+                st.session_state.msgs_learn = []
+                st.balloons()
+                st.rerun()
+
+with t_sandbox:
+    st.markdown("<div class='peak-card'>Hier nutzt die KI nur Wörter aus deinem Tresor. Fehler werden auf Deutsch erklärt.</div>", unsafe_allow_html=True)
+    for m in st.session_state.msgs_sandbox:
+        with st.chat_message(m["role"]): st.write(m["content"])
+    
+    aud_s = audio_recorder(text="Sprechen", icon_size="2x", neutral_color="#10b981", key="rec_s")
+    txt_s = st.chat_input("Plaudere auf Spanisch...")
+    
+    final_s = txt_s
+    if aud_s: final_s = transcribe_audio(aud_s, "es")
+    
+    if final_s:
+        st.session_state.msgs_sandbox.append({"role": "user", "content": final_s})
+        v_list = [v["word"] for v in data["vocab"]]
+        resp_s = get_ai_response(final_s, "Sandbox", {"vocab": v_list}, st.session_state.msgs_sandbox)
+        st.session_state.msgs_sandbox.append({"role": "assistant", "content": resp_s})
+        
+        audio_file = text_to_speech(resp_s)
+        if audio_file: st.audio(audio_file, autoplay=True)
         st.rerun()
