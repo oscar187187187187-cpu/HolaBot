@@ -1,192 +1,157 @@
 import streamlit as st
-import time
-from data_manager import (load_user_data, save_user_data, check_daily_streak, 
-                          update_progress, handle_wrong_answer, refill_hearts, buy_premium)
-from ai_manager import generate_lesson_exercise, text_to_speech
+import requests
+from gtts import gTTS
+import io
+import base64
+import speech_recognition as sr
+import re
 
-# --- CONFIG & CSS ---
-st.set_page_config(page_title="LingoApp Clone", page_icon="🦉", layout="centered")
+# --- EINSTELLUNGEN ---
+st.set_page_config(page_title="Spanisch Video-Call", page_icon="🇪🇸", layout="centered")
 
-st.markdown("""
-<style>
-    .top-bar {
-        display: flex; justify-content: space-between; align-items: center;
-        background-color: white; padding: 10px 20px; border-radius: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 30px; font-weight: bold;
+# API-Key aus den Streamlit Secrets laden
+try:
+    API_KEY = st.secrets["XAI_API_KEY"]
+except KeyError:
+    st.error("🚨 Bitte trage deinen API-Key in den Streamlit Secrets ein (Name: XAI_API_KEY).")
+    st.stop()
+
+# --- SPEICHER INITIALISIEREN ---
+if "history" not in st.session_state:
+    st.session_state.history = []
+if "vocab_list" not in st.session_state:
+    st.session_state.vocab_list = []
+if "call_started" not in st.session_state:
+    st.session_state.call_started = False
+if "audio_to_play" not in st.session_state:
+    st.session_state.audio_to_play = None
+
+# --- FUNKTIONEN ---
+def get_ai_response(system_prompt, user_text=None):
+    """Sendet die Nachrichten an Grok (xAI) und holt die Antwort."""
+    url = "https://api.x.ai/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {API_KEY}"
     }
-    .stat-item { display: flex; align-items: center; gap: 5px; font-size: 1.1rem; }
-    .heart-icon { color: #ff4b4b; }
-    .gem-icon { color: #1cb0f6; }
-    .streak-icon { color: #ff9600; }
     
-    /* Lernpfad Design */
-    .path-container { display: flex; flex-direction: column; align-items: center; margin-top: 20px; }
-    .path-node {
-        width: 80px; height: 80px; border-radius: 50%; display: flex; 
-        align-items: center; justify-content: center; font-size: 24px; font-weight: bold;
-        color: white; cursor: pointer; border: 5px solid rgba(255,255,255,0.5);
-        box-shadow: 0 6px 0 rgba(0,0,0,0.1); margin: 15px 0; z-index: 2; position: relative;
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(st.session_state.history)
+    
+    if user_text:
+        messages.append({"role": "user", "content": user_text})
+        
+    data = {
+        "model": "grok-beta",
+        "messages": messages,
+        "temperature": 0.1 # Sehr niedrig, damit die KI keine anderen Wörter erfindet
     }
-    .node-done { background-color: #58cc02; box-shadow: 0 6px 0 #46a302; }
-    .node-active { background-color: #ce82ff; box-shadow: 0 6px 0 #a561d1; transform: scale(1.1); }
-    .node-locked { background-color: #e5e5e5; color: #afafaf; box-shadow: 0 6px 0 #cecece; }
-    .path-line { width: 10px; height: 50px; background-color: #e5e5e5; margin: -20px 0; z-index: 1; }
-    .line-done { background-color: #58cc02; }
     
-    .stButton>button { width: 100%; border-radius: 15px; font-weight: bold; padding: 10px; }
-</style>
-""", unsafe_allow_html=True)
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return "Lo siento, error."
 
-# --- STATE INITIALIZATION ---
-if "user_data" not in st.session_state:
-    raw_data = load_user_data()
-    st.session_state.user_data = check_daily_streak(raw_data)
-if "active_lesson" not in st.session_state:
-    st.session_state.active_lesson = None
-if "current_exercise" not in st.session_state:
-    st.session_state.current_exercise = None
+def text_to_speech(text):
+    """Wandelt den Text der KI in eine spanische Sprachnachricht um."""
+    tts = gTTS(text, lang='es')
+    fp = io.BytesIO()
+    tts.write_to_fp(fp)
+    b64 = base64.b64encode(fp.getvalue()).decode()
+    st.session_state.audio_to_play = b64
 
-data = st.session_state.user_data
-hearts_display = "♾️" if data["premium"] else str(data["hearts"])
+def transcribe_audio(audio_bytes):
+    """Wandelt deine Sprachaufnahme in Text um."""
+    recognizer = sr.Recognizer()
+    with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+        audio_data = recognizer.record(source)
+        try:
+            return recognizer.recognize_google(audio_data, language="es-ES")
+        except:
+            return None
 
-# --- TOP STATUS BAR ---
-st.markdown(f"""
-<div class="top-bar">
-    <div class="stat-item"><span style="font-size: 1.5rem;">🇪🇸</span> Spanisch</div>
-    <div class="stat-item streak-icon">🔥 {data['streak']}</div>
-    <div class="stat-item gem-icon">💎 {data['gems']}</div>
-    <div class="stat-item heart-icon">❤️ {hearts_display}</div>
-</div>
-""", unsafe_allow_html=True)
+# --- APP LAYOUT ---
+st.title("🇪🇸 Spanisch Video-Call")
 
-# --- TABS (Home, Shop, Profil) ---
-tab_home, tab_shop, tab_profile = st.tabs(["🏠 Lernpfad", "🛒 Shop", "🛡️ Profil"])
-
-with tab_home:
-    if st.session_state.active_lesson is None:
-        st.subheader(f"Unit {data['current_unit']}: Spanisch Basics")
-        
-        # Zeichne den Lernpfad (5 Knoten pro Unit)
-        st.markdown('<div class="path-container">', unsafe_allow_html=True)
-        for i in range(1, 6):
-            # Bestimme den Status des Knotens
-            if i < data["current_lesson"]:
-                state_class = "node-done"
-                icon = "⭐"
-                is_disabled = True
-            elif i == data["current_lesson"]:
-                state_class = "node-active"
-                icon = "🚀"
-                is_disabled = False
-            else:
-                state_class = "node-locked"
-                icon = "🔒"
-                is_disabled = True
-            
-            # Button Rendern (versteckter Streamlit Button über dem CSS)
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                st.markdown(f'<div class="path-node {state_class}">{icon}</div>', unsafe_allow_html=True)
-                if not is_disabled:
-                    if st.button(f"Lektion {i} Starten", use_container_width=True):
-                        if data["hearts"] > 0 or data["premium"]:
-                            st.session_state.active_lesson = i
-                            st.rerun()
-                        else:
-                            st.error("Du hast keine Herzen mehr! Gehe in den Shop.")
-            
-            # Pfad-Linie zeichnen (außer beim letzten Element)
-            if i < 5:
-                line_class = "line-done" if i < data["current_lesson"] else ""
-                st.markdown(f'<div class="path-line {line_class}"></div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    else:
-        # --- AKTIVE LEKTION ---
-        st.header(f"Lektion {st.session_state.active_lesson}")
-        
-        if st.session_state.current_exercise is None:
-            with st.spinner("KI generiert Übung..."):
-                st.session_state.current_exercise = generate_lesson_exercise(
-                    data["current_unit"], 
-                    st.session_state.active_lesson, 
-                    data["known_words"]
-                )
-                
-        exercise = st.session_state.current_exercise
-        st.info(exercise.get("question", "Übersetze diesen Satz:"))
-        
-        # Audio Button
-        if "spanish_text" in exercise:
-            audio_file = text_to_speech(exercise["spanish_text"])
-            if audio_file:
-                st.audio(audio_file)
-        
-        user_answer = st.text_input("Deine Antwort:", key="user_ans")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Antwort Prüfen", type="primary"):
-                if not user_answer:
-                    st.warning("Bitte gib eine Antwort ein.")
-                else:
-                    correct = str(exercise.get("correct_answer", "")).strip().lower()
-                    if user_answer.strip().lower() == correct:
-                        st.success("🎉 Richtig! +15 XP")
-                        st.session_state.user_data = update_progress(data, 15, st.session_state.active_lesson)
-                        st.session_state.active_lesson = None
-                        st.session_state.current_exercise = None
-                        time.sleep(1.5)
-                        st.rerun()
-                    else:
-                        st.error(f"Falsch! Die richtige Antwort war: **{exercise.get('correct_answer')}**")
-                        st.session_state.user_data = handle_wrong_answer(data)
-                        if st.session_state.user_data["hearts"] <= 0 and not data["premium"]:
-                            st.warning("💔 Keine Herzen mehr! Lektion abgebrochen.")
-                            st.session_state.active_lesson = None
-                            st.session_state.current_exercise = None
-                            time.sleep(2)
-                            st.rerun()
-        with col2:
-            if st.button("Abbrechen"):
-                st.session_state.active_lesson = None
-                st.session_state.current_exercise = None
-                st.rerun()
-
-with tab_shop:
-    st.header("🛒 Lingo-Shop")
-    st.write("Gib deine hart verdienten Gems aus!")
+# 1. SETUP-BILDSCHIRM (Wörter einfügen)
+if not st.session_state.call_started:
+    st.write("### 📝 Vorbereitung")
+    st.write("Füge hier alle Wörter ein, die die KI benutzen darf. Sie wird mit nichts anderem antworten.")
     
-    sc1, sc2 = st.columns(2)
-    with sc1:
-        st.markdown("### ❤️ Herzen auffüllen")
-        st.write("Kosten: 350 Gems")
-        if st.button("Kaufen (350)", key="buy_hearts"):
-            if refill_hearts(data, 350):
-                st.success("Herzen komplett aufgefüllt!")
-                st.rerun()
-            else:
-                st.error("Nicht genug Gems oder Herzen sind bereits voll.")
-                
-    with sc2:
-        st.markdown("### 🌟 Super Lingo")
-        st.write("Unbegrenzte Herzen für immer!")
-        st.write("Kosten: 1000 Gems")
-        if data["premium"]:
-            st.success("Bereits freigeschaltet!")
+    vocab_input = st.text_area("Deine Vokabeln (kommagetrennt oder mit Leerzeichen):", height=150)
+    
+    if st.button("📞 Video-Call starten", use_container_width=True):
+        # Bereinigt die Eingabe und filtert leere Wörter heraus
+        words = [w.strip().lower() for w in re.split(r'[,\s\n]+', vocab_input) if w.strip()]
+        
+        if len(words) < 5:
+            st.warning("Bitte füge mindestens ein paar Wörter ein (z.B. Pronomen, Verben und Nomen).")
         else:
-            if st.button("Aktivieren (1000)", key="buy_super"):
-                if buy_premium(data, 1000):
-                    st.balloons()
-                    st.success("Super Lingo aktiviert!")
-                    st.rerun()
-                else:
-                    st.error("Nicht genug Gems!")
+            st.session_state.vocab_list = words
+            st.session_state.call_started = True
+            
+            # Erste Nachricht der KI generieren
+            all_words_str = ", ".join(words)
+            sys_prompt = f"Du bist ein spanischer Sprachpartner. WICHTIGSTE REGEL: Du darfst für deine Antworten AUSSCHLIESSLICH Wörter aus dieser Liste verwenden: [{all_words_str}]. Keine anderen Wörter! Stelle mir jetzt sofort die erste kurze Frage auf Spanisch."
+            
+            with st.spinner("Verbindung wird hergestellt..."):
+                ai_reply = get_ai_response(sys_prompt, "Start")
+                st.session_state.history.append({"role": "assistant", "content": ai_reply})
+                text_to_speech(ai_reply)
+            st.rerun()
 
-with tab_profile:
-    st.header("🛡️ Dein Profil")
-    st.metric("Gesammelte XP", data["xp"])
-    st.metric("Aktueller Streak", f"{data['streak']} Tage")
-    st.metric("Premium Status", "Aktiv" if data["premium"] else "Inaktiv")
-    st.write("### Bekannte Wörter")
-    st.write(", ".join(data["known_words"]))
+# 2. CALL-BILDSCHIRM (Nur Sprache)
+if st.session_state.call_started:
+    # Simulierter Video-Call Avatar
+    st.markdown("""
+        <div style="background-color: #1E1E1E; border-radius: 20px; padding: 40px; text-align: center; margin-bottom: 20px;">
+            <h1 style='font-size: 120px; margin: 0;'>👤</h1>
+            <p style="color: #4CAF50; margin-top: 10px;">Verbunden</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Audio der KI automatisch abspielen
+    if st.session_state.audio_to_play:
+        audio_html = f'<audio autoplay="true"><source src="data:audio/mp3;base64,{st.session_state.audio_to_play}" type="audio/mp3"></audio>'
+        st.markdown(audio_html, unsafe_allow_html=True)
+        st.session_state.audio_to_play = None 
+        
+    # Transkription des Gesprächs anzeigen (damit du siehst, was verstanden wurde)
+    with st.expander("Transkript der Konversation anzeigen"):
+        for msg in st.session_state.history:
+            if msg["role"] == "user":
+                st.markdown(f"**Du:** {msg['content']}")
+            else:
+                st.markdown(f"**KI:** {msg['content']}")
+            
+    st.write("---")
+    
+    # AUSSCHLIESSLICH MIKROFON-EINGABE (Kein Textfeld)
+    st.write("### 🎙️ Du bist dran")
+    audio_value = st.audio_input("Halte den Knopf zum Sprechen auf Spanisch:")
+    
+    if audio_value:
+        with st.spinner("KI überlegt..."):
+            user_text = transcribe_audio(audio_value.getvalue())
+            
+            if user_text:
+                st.session_state.history.append({"role": "user", "content": user_text})
+                
+                # KI antwortet streng mit deinen Wörtern
+                all_words_str = ", ".join(st.session_state.vocab_list)
+                sys_prompt = f"Du bist ein spanischer Sprachpartner. REGEL: Du darfst AUSSCHLIESSLICH diese Wörter verwenden: [{all_words_str}]. Keine anderen. Reagiere auf das, was der User sagt, und stelle eine neue kurze Frage aus deinen erlaubten Wörtern."
+                
+                ai_reply = get_ai_response(sys_prompt)
+                st.session_state.history.append({"role": "assistant", "content": ai_reply})
+                text_to_speech(ai_reply)
+                
+                st.rerun()
+            else:
+                st.error("Ich konnte dich nicht verstehen. Bitte sprich nochmal.")
+                
+    if st.button("Call beenden", type="primary"):
+        st.session_state.call_started = False
+        st.session_state.history = []
+        st.rerun()
