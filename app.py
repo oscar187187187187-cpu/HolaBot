@@ -1,5 +1,5 @@
 import streamlit as st
-import requests
+from groq import Groq
 from gtts import gTTS
 import io
 import base64
@@ -7,13 +7,15 @@ import speech_recognition as sr
 import re
 
 # --- EINSTELLUNGEN ---
-st.set_page_config(page_title="Spanisch Video-Call", page_icon="🇪🇸", layout="centered")
+st.set_page_config(page_title="Spanisch Video-Call (Groq)", page_icon="🇪🇸", layout="centered")
 
-# API-Key aus den Streamlit Secrets laden
+# API-Key aus den Streamlit Secrets laden (Für GROQ)
 try:
-    API_KEY = st.secrets["XAI_API_KEY"]
+    # Wir nennen es GROQ_API_KEY, passend zum Anbieter
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+    client = Groq(api_key=GROQ_API_KEY)
 except KeyError:
-    st.error("🚨 Bitte trage deinen API-Key in den Streamlit Secrets ein (Name: XAI_API_KEY).")
+    st.error("🚨 Key fehlt! Geh in die Streamlit Settings -> Secrets und füge GROQ_API_KEY = 'gsk_...' hinzu.")
     st.stop()
 
 # --- SPEICHER INITIALISIEREN ---
@@ -27,32 +29,24 @@ if "audio_to_play" not in st.session_state:
     st.session_state.audio_to_play = None
 
 # --- FUNKTIONEN ---
-def get_ai_response(system_prompt, user_text=None):
-    """Sendet die Nachrichten an Grok (xAI) und holt die Antwort."""
-    url = "https://api.x.ai/v1/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {API_KEY}"
-    }
-    
+def get_groq_response(system_prompt, user_text=None):
+    """Holt die Antwort über die offizielle Groq-Bibliothek."""
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(st.session_state.history)
     
     if user_text:
         messages.append({"role": "user", "content": user_text})
         
-    data = {
-        "model": "grok-beta",
-        "messages": messages,
-        "temperature": 0.1 # Sehr niedrig, damit die KI keine anderen Wörter erfindet
-    }
-    
     try:
-        response = requests.post(url, headers=headers, json=data)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        # Wir nutzen llama3-8b, das ist extrem schnell und perfekt für Groq
+        completion = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=messages,
+            temperature=0.1 # Sehr niedrig für maximale Regeltreue
+        )
+        return completion.choices[0].message.content
     except Exception as e:
-        return "Lo siento, error."
+        return f"Lo siento, error de Groq: {str(e)}"
 
 def text_to_speech(text):
     """Wandelt den Text der KI in eine spanische Sprachnachricht um."""
@@ -73,83 +67,74 @@ def transcribe_audio(audio_bytes):
             return None
 
 # --- APP LAYOUT ---
-st.title("🇪🇸 Spanisch Video-Call")
+st.title("🇪🇸 Spanisch Video-Call (Groq)")
 
-# 1. SETUP-BILDSCHIRM (Wörter einfügen)
+# 1. SETUP-BILDSCHIRM
 if not st.session_state.call_started:
     st.write("### 📝 Vorbereitung")
-    st.write("Füge hier alle Wörter ein, die die KI benutzen darf. Sie wird mit nichts anderem antworten.")
+    st.write("Füge hier deine Wörter ein. Die Groq-KI wird nur diese nutzen.")
     
     vocab_input = st.text_area("Deine Vokabeln (kommagetrennt oder mit Leerzeichen):", height=150)
     
     if st.button("📞 Video-Call starten", use_container_width=True):
-        # Bereinigt die Eingabe und filtert leere Wörter heraus
         words = [w.strip().lower() for w in re.split(r'[,\s\n]+', vocab_input) if w.strip()]
         
         if len(words) < 5:
-            st.warning("Bitte füge mindestens ein paar Wörter ein (z.B. Pronomen, Verben und Nomen).")
+            st.warning("Bitte füge ein paar Wörter hinzu.")
         else:
             st.session_state.vocab_list = words
             st.session_state.call_started = True
             
-            # Erste Nachricht der KI generieren
+            # Erste Nachricht generieren
             all_words_str = ", ".join(words)
             sys_prompt = f"Du bist ein spanischer Sprachpartner. WICHTIGSTE REGEL: Du darfst für deine Antworten AUSSCHLIESSLICH Wörter aus dieser Liste verwenden: [{all_words_str}]. Keine anderen Wörter! Stelle mir jetzt sofort die erste kurze Frage auf Spanisch."
             
-            with st.spinner("Verbindung wird hergestellt..."):
-                ai_reply = get_ai_response(sys_prompt, "Start")
+            with st.spinner("Verbindung über Groq wird hergestellt..."):
+                ai_reply = get_groq_response(sys_prompt, "Start")
                 st.session_state.history.append({"role": "assistant", "content": ai_reply})
                 text_to_speech(ai_reply)
             st.rerun()
 
-# 2. CALL-BILDSCHIRM (Nur Sprache)
+# 2. CALL-BILDSCHIRM
 if st.session_state.call_started:
-    # Simulierter Video-Call Avatar
     st.markdown("""
         <div style="background-color: #1E1E1E; border-radius: 20px; padding: 40px; text-align: center; margin-bottom: 20px;">
             <h1 style='font-size: 120px; margin: 0;'>👤</h1>
-            <p style="color: #4CAF50; margin-top: 10px;">Verbunden</p>
+            <p style="color: #4CAF50; margin-top: 10px;">Groq Video-Call Aktiv</p>
         </div>
     """, unsafe_allow_html=True)
     
-    # Audio der KI automatisch abspielen
     if st.session_state.audio_to_play:
         audio_html = f'<audio autoplay="true"><source src="data:audio/mp3;base64,{st.session_state.audio_to_play}" type="audio/mp3"></audio>'
         st.markdown(audio_html, unsafe_allow_html=True)
         st.session_state.audio_to_play = None 
         
-    # Transkription des Gesprächs anzeigen (damit du siehst, was verstanden wurde)
-    with st.expander("Transkript der Konversation anzeigen"):
+    with st.expander("Transkript anzeigen"):
         for msg in st.session_state.history:
-            if msg["role"] == "user":
-                st.markdown(f"**Du:** {msg['content']}")
-            else:
-                st.markdown(f"**KI:** {msg['content']}")
+            role = "Du" if msg["role"] == "user" else "KI"
+            st.markdown(f"**{role}:** {msg['content']}")
             
     st.write("---")
     
-    # AUSSCHLIESSLICH MIKROFON-EINGABE (Kein Textfeld)
     st.write("### 🎙️ Du bist dran")
-    audio_value = st.audio_input("Halte den Knopf zum Sprechen auf Spanisch:")
+    audio_value = st.audio_input("Halte den Knopf zum Sprechen:")
     
     if audio_value:
-        with st.spinner("KI überlegt..."):
+        with st.spinner("Groq antwortet extrem schnell..."):
             user_text = transcribe_audio(audio_value.getvalue())
             
             if user_text:
                 st.session_state.history.append({"role": "user", "content": user_text})
                 
-                # KI antwortet streng mit deinen Wörtern
                 all_words_str = ", ".join(st.session_state.vocab_list)
-                sys_prompt = f"Du bist ein spanischer Sprachpartner. REGEL: Du darfst AUSSCHLIESSLICH diese Wörter verwenden: [{all_words_str}]. Keine anderen. Reagiere auf das, was der User sagt, und stelle eine neue kurze Frage aus deinen erlaubten Wörtern."
+                sys_prompt = f"Du bist ein spanischer Sprachpartner. REGEL: Du darfst AUSSCHLIESSLICH diese Wörter verwenden: [{all_words_str}]. Keine anderen. Reagiere kurz und stelle eine neue Frage."
                 
-                ai_reply = get_ai_response(sys_prompt)
+                ai_reply = get_groq_response(sys_prompt)
                 st.session_state.history.append({"role": "assistant", "content": ai_reply})
                 text_to_speech(ai_reply)
-                
                 st.rerun()
             else:
-                st.error("Ich konnte dich nicht verstehen. Bitte sprich nochmal.")
+                st.error("Nicht verstanden. Bitte noch einmal sprechen.")
                 
     if st.button("Call beenden", type="primary"):
         st.session_state.call_started = False
