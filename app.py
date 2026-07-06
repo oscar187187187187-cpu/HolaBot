@@ -3,13 +3,14 @@ from groq import Groq
 from gtts import gTTS
 import io
 import base64
+import speech_recognition as sr
 import re
 import os
 import json
 from datetime import datetime, timedelta
 
 # --- EINSTELLUNGEN ---
-st.set_page_config(page_title="Spanisch Video-Call (Groq Edition)", page_icon="🇪🇸", layout="centered")
+st.set_page_config(page_title="Spanisch Video-Call (Groq)", page_icon="🇪🇸", layout="centered")
 
 # API-Key aus den Streamlit Secrets laden (Für GROQ)
 try:
@@ -83,6 +84,7 @@ def get_groq_response(system_prompt, user_text=None):
         messages.append({"role": "user", "content": user_text})
         
     try:
+        # Hier nutzen wir jetzt das überall freigeschaltete Standard-Modell llama3-8b-8192
         completion = client.chat.completions.create(
             model="llama3-8b-8192",
             messages=messages,
@@ -100,21 +102,18 @@ def text_to_speech(text):
     b64 = base64.b64encode(fp.getvalue()).decode()
     st.session_state.audio_to_play = b64
 
-def transcribe_audio_groq(audio_bytes):
-    """Wandelt deine Sprachaufnahme mit Groqs Whisper-large-v3-turbo in Text um."""
-    try:
-        transcription = client.audio.transcriptions.create(
-            file=("audio.wav", audio_bytes),
-            model="whisper-large-v3-turbo",
-            language="es" # Zwingt die KI, spanisch zu erkennen
-        )
-        return transcription.text
-    except Exception as e:
-        st.error(f"Fehler bei der Spracherkennung: {str(e)}")
-        return None
+def transcribe_audio(audio_bytes):
+    """Wandelt deine Sprachaufnahme in Text um."""
+    recognizer = sr.Recognizer()
+    with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+        audio_data = recognizer.record(source)
+        try:
+            return recognizer.recognize_google(audio_data, language="es-ES")
+        except:
+            return None
 
 # --- APP LAYOUT ---
-st.title("🇪🇸 Spanisch Video-Call")
+st.title("🇪🇸 Spanisch Video-Call (Groq Edition)")
 
 # 1. SETUP-BILDSCHIRM
 if not st.session_state.call_started:
@@ -133,12 +132,9 @@ if not st.session_state.call_started:
             st.session_state.call_started = True
             
             all_words_str = ", ".join(words)
-            # NEUER PROMPT: Absolut strikt gegen extra Text!
             sys_prompt = (
-                f"Du bist ein spanischer Sprachpartner. "
-                f"REGEL 1: Du darfst für deine Antworten AUSSCHLIESSLICH Wörter aus dieser Liste verwenden: [{all_words_str}]. Keine anderen! "
-                f"REGEL 2: Du führst das Gespräch aktiv und stellst eine kurze Frage auf Spanisch, um das Gespräch zu eröffnen. "
-                f"REGEL 3 (EXTREM WICHTIG): Schreibe AUSSCHLIESSLICH den Text, den du auch aussprechen willst. Keine Erklärungen, keine Regieanweisungen, keine Kommentare wie 'Hier ist eine Frage:'. Nur der pure spanische Satz!"
+                f"Du bist ein spanischer Sprachpartner. WICHTIGSTE REGEL: Du darfst für deine Antworten AUSSCHLIESSLICH Wörter aus dieser Liste verwenden: [{all_words_str}]. Keine anderen Wörter! "
+                "ZWEITE REGEL: Du führst das Gespräch aktiv! Lass den User nicht bestimmen. Stell ihm sofort eine kurze, knackige Frage auf Spanisch, um das Gespräch zu eröffnen."
             )
             
             with st.spinner("Verbindung zu Groq wird aufgebaut..."):
@@ -171,7 +167,7 @@ if st.session_state.call_started:
         st.markdown(audio_html, unsafe_allow_html=True)
         st.session_state.audio_to_play = None 
         
-    with st.expander("Transkript anzeigen (zum Nachlesen)"):
+    with st.expander("Transkript anzeigen"):
         for msg in st.session_state.history:
             role = "Du" if msg["role"] == "user" else "Groq KI"
             st.markdown(f"**{role}:** {msg['content']}")
@@ -181,9 +177,8 @@ if st.session_state.call_started:
     audio_value = st.audio_input("Halte den Knopf zum Sprechen:")
     
     if audio_value:
-        with st.spinner("Groq Whisper übersetzt & KI antwortet..."):
-            # Nutzt jetzt Groq Whisper für Sprache-zu-Text!
-            user_text = transcribe_audio_groq(audio_value.getvalue())
+        with st.spinner("Groq antwortet blitzschnell..."):
+            user_text = transcribe_audio(audio_value.getvalue())
             
             if user_text:
                 st.session_state.history.append({"role": "user", "content": user_text})
@@ -191,8 +186,7 @@ if st.session_state.call_started:
                 all_words_str = ", ".join(st.session_state.vocab_list)
                 sys_prompt = (
                     f"Du bist ein spanischer Sprachpartner. REGEL 1: Du darfst AUSSCHLIESSLICH diese Wörter verwenden: [{all_words_str}]. "
-                    f"REGEL 2: Du bist der Interviewer! Antworte extrem kurz (max 1 Satz) auf das, was der User sagt, und STELL SOFORT EINE NEUE FRAGE auf Spanisch. "
-                    f"REGEL 3 (EXTREM WICHTIG): Schreibe AUSSCHLIESSLICH den Text, den du sagst. Keine Anmerkungen, keine Übersetzungen, keine Einleitungen. Nur der reine spanische Satz!"
+                    "REGEL 2: Du bist der Interviewer! Antworte extrem kurz (max 1 Satz) auf das, was der User sagt, und STELL SOFORT EINE NEUE FRAGE auf Spanisch. Lass ihn nicht die Führung übernehmen."
                 )
                 
                 ai_reply = get_groq_response(sys_prompt)
