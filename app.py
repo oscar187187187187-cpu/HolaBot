@@ -40,11 +40,11 @@ def update_streak():
     yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
     
     if data["last_date"] == today:
-        return data["streak"]  # Heute schon gelernt, Streak bleibt gleich
+        return data["streak"]  # Heute schon gelernt
     elif data["last_date"] == yesterday:
         data["streak"] += 1   # Gestern gelernt, Streak geht hoch!
     else:
-        data["streak"] = 1    # Tag verpasst oder erster Start, Streak startet bei 1
+        data["streak"] = 1    # Tag verpasst, Neustart
         
     data["last_date"] = today
     save_streak(data)
@@ -62,7 +62,6 @@ if "audio_to_play" not in st.session_state:
 if "past_calls" not in st.session_state:
     st.session_state.past_calls = []
 
-# Streak laden für die Anzeige im Sidebar
 streak_info = load_streak()
 
 # --- SIDEBAR DISPLAY ---
@@ -75,10 +74,9 @@ else:
 
 # --- FUNKTIONEN FÜR KI & AUDIO ---
 def get_groq_response(system_prompt, user_text=None):
-    """Holt die Antwort über die offizielle Groq-Bibliothek."""
+    """Holt die Antwort über die offizielle Groq-Bibliothek mit dem Standard-Modell."""
     messages = [{"role": "system", "content": system_prompt}]
     
-    # Historie passend für Groq hinzufügen
     for msg in st.session_state.history:
         messages.append({"role": msg["role"], "content": msg["content"]})
         
@@ -86,9 +84,9 @@ def get_groq_response(system_prompt, user_text=None):
         messages.append({"role": "user", "content": user_text})
         
     try:
-        # Wir nutzen das modernste & schnellste Llama-3.1 Modell auf Groq
+        # Hier nutzen wir jetzt das überall freigeschaltete Standard-Modell llama3-8b-8192
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama3-8b-8192",
             messages=messages,
             temperature=0.1
         )
@@ -133,7 +131,6 @@ if not st.session_state.call_started:
             st.session_state.vocab_list = words
             st.session_state.call_started = True
             
-            # System Prompt: Absolute Dominanz der KI im Gespräch + Wort-Limit
             all_words_str = ", ".join(words)
             sys_prompt = (
                 f"Du bist ein spanischer Sprachpartner. WICHTIGSTE REGEL: Du darfst für deine Antworten AUSSCHLIESSLICH Wörter aus dieser Liste verwenden: [{all_words_str}]. Keine anderen Wörter! "
@@ -146,7 +143,6 @@ if not st.session_state.call_started:
                 text_to_speech(ai_reply)
             st.rerun()
 
-    # Chat-Historie vergangener Sessions anzeigen
     if st.session_state.past_calls:
         st.write("---")
         with st.expander("📂 Gespeicherte alte Chats anzeigen", expanded=False):
@@ -201,13 +197,10 @@ if st.session_state.call_started:
                 st.error("Nicht verstanden. Bitte noch einmal sprechen.")
                 
     if st.button("Call beenden (Streak sichern)", type="primary"):
-        # Chat sichern
         if st.session_state.history:
             st.session_state.past_calls.append(st.session_state.history.copy())
         
-        # Streak aktualisieren!
         update_streak()
-        
         st.session_state.call_started = False
         st.session_state.history = []
         st.rerun()
