@@ -1,21 +1,54 @@
 import streamlit as st
-import google.generativeai as genai
+from groq import Groq
 from gtts import gTTS
 import io
 import base64
 import speech_recognition as sr
 import re
+import os
+import json
+from datetime import datetime, timedelta
 
 # --- EINSTELLUNGEN ---
-st.set_page_config(page_title="Spanisch Video-Call (Gemini)", page_icon="🇪🇸", layout="centered")
+st.set_page_config(page_title="Spanisch Video-Call (Groq)", page_icon="🇪🇸", layout="centered")
 
-# API-Key aus den Streamlit Secrets laden (Für GEMINI)
+# API-Key aus den Streamlit Secrets laden (Für GROQ)
 try:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=GEMINI_API_KEY)
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+    client = Groq(api_key=GROQ_API_KEY)
 except KeyError:
-    st.error("🚨 Key fehlt! Geh in die Streamlit Settings -> Secrets und füge GEMINI_API_KEY = 'AIzaSy...' hinzu.")
+    st.error("🚨 Key fehlt! Geh in die Streamlit Settings -> Secrets und füge GROQ_API_KEY = 'gsk_...' hinzu.")
     st.stop()
+
+# --- STREAK FUNKTIONEN ---
+def load_streak():
+    if os.path.exists("streak_data.json"):
+        try:
+            with open("streak_data.json", "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {"streak": 0, "last_date": None}
+
+def save_streak(data):
+    with open("streak_data.json", "w") as f:
+        json.dump(data, f)
+
+def update_streak():
+    data = load_streak()
+    today = datetime.now().date().isoformat()
+    yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
+    
+    if data["last_date"] == today:
+        return data["streak"]  # Heute schon gelernt, Streak bleibt gleich
+    elif data["last_date"] == yesterday:
+        data["streak"] += 1   # Gestern gelernt, Streak geht hoch!
+    else:
+        data["streak"] = 1    # Tag verpasst oder erster Start, Streak startet bei 1
+        
+    data["last_date"] = today
+    save_streak(data)
+    return data["streak"]
 
 # --- SPEICHER INITIALISIEREN ---
 if "history" not in st.session_state:
@@ -26,32 +59,42 @@ if "call_started" not in st.session_state:
     st.session_state.call_started = False
 if "audio_to_play" not in st.session_state:
     st.session_state.audio_to_play = None
+if "past_calls" not in st.session_state:
+    st.session_state.past_calls = []
 
-# --- FUNKTIONEN ---
-def get_gemini_response(system_prompt, user_text="Start"):
-    """Holt die Antwort über die offizielle Gemini-Bibliothek."""
+# Streak laden für die Anzeige im Sidebar
+streak_info = load_streak()
+
+# --- SIDEBAR DISPLAY ---
+st.sidebar.title("📊 Dein Fortschritt")
+st.sidebar.markdown(f"### 🔥 Streak: **{streak_info['streak']} Tage**")
+if streak_info['last_date'] == datetime.now().date().isoformat():
+    st.sidebar.success("✅ Heute schon gelernt!")
+else:
+    st.sidebar.warning("⚡ Heute noch nicht gelernt!")
+
+# --- FUNKTIONEN FÜR KI & AUDIO ---
+def get_groq_response(system_prompt, user_text=None):
+    """Holt die Antwort über die offizielle Groq-Bibliothek."""
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # Historie passend für Groq hinzufügen
+    for msg in st.session_state.history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+        
+    if user_text:
+        messages.append({"role": "user", "content": user_text})
+        
     try:
-        # Hier nutzen wir das aktuellste, blitzschnelle Modell
-        model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
-            system_instruction=system_prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=0.1 # Sehr niedrig für maximale Regeltreue bei deinen Wörtern
-            )
+        # Wir nutzen das modernste & schnellste Llama-3.1 Modell auf Groq
+        completion = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=messages,
+            temperature=0.1
         )
-        
-        # Chat-Historie für Gemini formatieren
-        formatted_history = []
-        for msg in st.session_state.history:
-            role = "user" if msg["role"] == "user" else "model"
-            formatted_history.append({"role": role, "parts": [msg["content"]]})
-            
-        chat = model.start_chat(history=formatted_history)
-        response = chat.send_message(user_text)
-        
-        return response.text
+        return completion.choices[0].message.content
     except Exception as e:
-        return f"Lo siento, hubo un error con Gemini: {str(e)}"
+        return f"Lo siento, error de Groq: {str(e)}"
 
 def text_to_speech(text):
     """Wandelt den Text der KI in eine spanische Sprachnachricht um."""
@@ -72,12 +115,12 @@ def transcribe_audio(audio_bytes):
             return None
 
 # --- APP LAYOUT ---
-st.title("🇪🇸 Spanisch Video-Call (Gemini)")
+st.title("🇪🇸 Spanisch Video-Call (Groq Edition)")
 
 # 1. SETUP-BILDSCHIRM
 if not st.session_state.call_started:
     st.write("### 📝 Vorbereitung")
-    st.write("Füge hier deine Wörter ein. Ich (die KI) werde streng nur diese nutzen.")
+    st.write("Füge hier deine 519 Wörter ein. Groq wird dich aktiv damit ausquetschen!")
     
     vocab_input = st.text_area("Deine Vokabeln (kommagetrennt oder mit Leerzeichen):", height=150)
     
@@ -85,27 +128,41 @@ if not st.session_state.call_started:
         words = [w.strip().lower() for w in re.split(r'[,\s\n]+', vocab_input) if w.strip()]
         
         if len(words) < 5:
-            st.warning("Bitte füge ein paar mehr Wörter hinzu.")
+            st.warning("Bitte füge deine Wörter ein.")
         else:
             st.session_state.vocab_list = words
             st.session_state.call_started = True
             
-            # Erste Nachricht generieren
+            # System Prompt: Absolute Dominanz der KI im Gespräch + Wort-Limit
             all_words_str = ", ".join(words)
-            sys_prompt = f"Du bist ein spanischer Sprachpartner. WICHTIGSTE REGEL: Du darfst für deine Antworten AUSSCHLIESSLICH Wörter aus dieser Liste verwenden: [{all_words_str}]. Keine anderen Wörter! Stelle mir jetzt sofort die erste kurze Frage auf Spanisch."
+            sys_prompt = (
+                f"Du bist ein spanischer Sprachpartner. WICHTIGSTE REGEL: Du darfst für deine Antworten AUSSCHLIESSLICH Wörter aus dieser Liste verwenden: [{all_words_str}]. Keine anderen Wörter! "
+                "ZWEITE REGEL: Du führst das Gespräch aktiv! Lass den User nicht bestimmen. Stell ihm sofort eine kurze, knackige Frage auf Spanisch, um das Gespräch zu eröffnen."
+            )
             
-            with st.spinner("Verbindung zu Gemini wird hergestellt..."):
-                ai_reply = get_gemini_response(sys_prompt, "Start")
+            with st.spinner("Verbindung zu Groq wird aufgebaut..."):
+                ai_reply = get_groq_response(sys_prompt, "Start")
                 st.session_state.history.append({"role": "assistant", "content": ai_reply})
                 text_to_speech(ai_reply)
             st.rerun()
+
+    # Chat-Historie vergangener Sessions anzeigen
+    if st.session_state.past_calls:
+        st.write("---")
+        with st.expander("📂 Gespeicherte alte Chats anzeigen", expanded=False):
+            for i, past_chat in enumerate(reversed(st.session_state.past_calls)):
+                st.markdown(f"##### 💾 Gespräch Durchlauf {len(st.session_state.past_calls) - i}")
+                for msg in past_chat:
+                    role = "Du" if msg["role"] == "user" else "Groq KI"
+                    st.markdown(f"**{role}:** {msg['content']}")
+                st.write("---")
 
 # 2. CALL-BILDSCHIRM
 if st.session_state.call_started:
     st.markdown("""
         <div style="background-color: #1E1E1E; border-radius: 20px; padding: 40px; text-align: center; margin-bottom: 20px;">
             <h1 style='font-size: 120px; margin: 0;'>👤</h1>
-            <p style="color: #4CAF50; margin-top: 10px;">Gemini Video-Call Aktiv</p>
+            <p style="color: #4CAF50; margin-top: 10px;">Groq Video-Call Aktiv</p>
         </div>
     """, unsafe_allow_html=True)
     
@@ -116,32 +173,41 @@ if st.session_state.call_started:
         
     with st.expander("Transkript anzeigen"):
         for msg in st.session_state.history:
-            role = "Du" if msg["role"] == "user" else "KI"
+            role = "Du" if msg["role"] == "user" else "Groq KI"
             st.markdown(f"**{role}:** {msg['content']}")
             
     st.write("---")
-    
     st.write("### 🎙️ Du bist dran")
     audio_value = st.audio_input("Halte den Knopf zum Sprechen:")
     
     if audio_value:
-        with st.spinner("Gemini antwortet..."):
+        with st.spinner("Groq antwortet blitzschnell..."):
             user_text = transcribe_audio(audio_value.getvalue())
             
             if user_text:
                 st.session_state.history.append({"role": "user", "content": user_text})
                 
                 all_words_str = ", ".join(st.session_state.vocab_list)
-                sys_prompt = f"Du bist ein spanischer Sprachpartner. REGEL: Du darfst AUSSCHLIESSLICH diese Wörter verwenden: [{all_words_str}]. Keine anderen. Reagiere kurz und stelle eine neue Frage."
+                sys_prompt = (
+                    f"Du bist ein spanischer Sprachpartner. REGEL 1: Du darfst AUSSCHLIESSLICH diese Wörter verwenden: [{all_words_str}]. "
+                    "REGEL 2: Du bist der Interviewer! Antworte extrem kurz (max 1 Satz) auf das, was der User sagt, und STELL SOFORT EINE NEUE FRAGE auf Spanisch. Lass ihn nicht die Führung übernehmen."
+                )
                 
-                ai_reply = get_gemini_response(sys_prompt, user_text)
+                ai_reply = get_groq_response(sys_prompt)
                 st.session_state.history.append({"role": "assistant", "content": ai_reply})
                 text_to_speech(ai_reply)
                 st.rerun()
             else:
                 st.error("Nicht verstanden. Bitte noch einmal sprechen.")
                 
-    if st.button("Call beenden", type="primary"):
+    if st.button("Call beenden (Streak sichern)", type="primary"):
+        # Chat sichern
+        if st.session_state.history:
+            st.session_state.past_calls.append(st.session_state.history.copy())
+        
+        # Streak aktualisieren!
+        update_streak()
+        
         st.session_state.call_started = False
         st.session_state.history = []
         st.rerun()
