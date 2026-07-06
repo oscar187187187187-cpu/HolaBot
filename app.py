@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 # --- EINSTELLUNGEN ---
 st.set_page_config(page_title="Spanisch Video-Call (Groq)", page_icon="🇪🇸", layout="centered")
 
-# API-Key aus den Streamlit Secrets laden (Für GROQ)
+# API-Key aus den Streamlit Secrets laden
 try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
     client = Groq(api_key=GROQ_API_KEY)
@@ -40,11 +40,11 @@ def update_streak():
     yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
     
     if data["last_date"] == today:
-        return data["streak"]  # Heute schon gelernt
+        return data["streak"] 
     elif data["last_date"] == yesterday:
-        data["streak"] += 1   # Gestern gelernt, Streak geht hoch!
+        data["streak"] += 1   
     else:
-        data["streak"] = 1    # Tag verpasst, Neustart
+        data["streak"] = 1    
         
     data["last_date"] = today
     save_streak(data)
@@ -61,6 +61,9 @@ if "audio_to_play" not in st.session_state:
     st.session_state.audio_to_play = None
 if "past_calls" not in st.session_state:
     st.session_state.past_calls = []
+# NEU: Dieser Speicher verhindert den Endlos-Loop!
+if "last_processed_audio" not in st.session_state:
+    st.session_state.last_processed_audio = None
 
 streak_info = load_streak()
 
@@ -74,7 +77,6 @@ else:
 
 # --- FUNKTIONEN FÜR KI & AUDIO ---
 def get_groq_response(system_prompt, user_text=None):
-    """Holt die Antwort über die offizielle Groq-Bibliothek."""
     messages = [{"role": "system", "content": system_prompt}]
     
     for msg in st.session_state.history:
@@ -85,16 +87,16 @@ def get_groq_response(system_prompt, user_text=None):
         
     try:
         completion = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
+            model="llama3-8b-8192",
             messages=messages,
-            temperature=0.3 # Leicht erhöht, um "hitzige" Wiederholungen zu vermeiden
+            temperature=0.3,
+            max_tokens=60 # NEU: Zwingt die KI physisch dazu, sich kurzzufassen und nicht auszurasten
         )
         return completion.choices[0].message.content
     except Exception as e:
         return f"Lo siento, error de Groq: {str(e)}"
 
 def text_to_speech(text):
-    """Wandelt den Text der KI in eine spanische Sprachnachricht um."""
     tts = gTTS(text, lang='es')
     fp = io.BytesIO()
     tts.write_to_fp(fp)
@@ -102,7 +104,6 @@ def text_to_speech(text):
     st.session_state.audio_to_play = b64
 
 def transcribe_audio(audio_bytes):
-    """Wandelt deine Sprachaufnahme in Text um."""
     recognizer = sr.Recognizer()
     with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
         audio_data = recognizer.record(source)
@@ -129,13 +130,14 @@ if not st.session_state.call_started:
         else:
             st.session_state.vocab_list = words
             st.session_state.call_started = True
+            st.session_state.last_processed_audio = None # Reset beim Start
             
             all_words_str = ", ".join(words)
             sys_prompt = (
                 f"Du bist ein spanischer Sprachpartner. "
                 f"REGEL 1: Du darfst für deine Antworten AUSSCHLIESSLICH Wörter aus dieser Liste verwenden: [{all_words_str}]. Keine anderen Wörter! "
-                f"REGEL 2: Du führst das Gespräch aktiv. Stell dem User sofort eine kurze, knackige Frage auf Spanisch, um das Gespräch zu eröffnen. "
-                f"REGEL 3 (STOPP-REGEL): Gib IMMER nur exakt EINE einzige Antwort und exakt EINE kurze Frage aus. Generiere niemals mehrere Optionen, Listen oder Beispielsätze. Nach deiner ersten Frage hörst du sofort auf zu schreiben!"
+                f"REGEL 2: Du führst das Gespräch aktiv. Stell dem User sofort eine kurze, knackige Frage auf Spanisch. "
+                f"REGEL 3 (STOPP-REGEL): Gib IMMER nur exakt EINE einzige Antwort und exakt EINE kurze Frage aus. Generiere niemals mehrere Optionen."
             )
             
             with st.spinner("Verbindung zu Groq wird aufgebaut..."):
@@ -178,25 +180,31 @@ if st.session_state.call_started:
     audio_value = st.audio_input("Halte den Knopf zum Sprechen:")
     
     if audio_value:
-        with st.spinner("Groq antwortet..."):
-            user_text = transcribe_audio(audio_value.getvalue())
+        current_audio_bytes = audio_value.getvalue()
+        
+        # NEU: Der Loop-Blocker. Nur ausführen, wenn wir dieses spezifische Audio noch nicht hatten!
+        if st.session_state.last_processed_audio != current_audio_bytes:
+            st.session_state.last_processed_audio = current_audio_bytes
             
-            if user_text:
-                st.session_state.history.append({"role": "user", "content": user_text})
+            with st.spinner("Groq antwortet..."):
+                user_text = transcribe_audio(current_audio_bytes)
                 
-                all_words_str = ", ".join(st.session_state.vocab_list)
-                sys_prompt = (
-                    f"Du bist ein spanischer Sprachpartner. REGEL 1: Du darfst AUSSCHLIESSLICH diese Wörter verwenden: [{all_words_str}]. "
-                    f"REGEL 2: Du bist der Interviewer! Antworte extrem kurz (max 1 Satz) auf das, was der User sagt, und STELL SOFORT EINE NEUE FRAGE auf Spanisch. "
-                    f"REGEL 3 (STOPP-REGEL): Antworte mit exakt EINEM Satz und stelle exakt EINE Frage. Erzeuge keine Optionen, keine Listen und höre nach der Frage sofort auf!"
-                )
-                
-                ai_reply = get_groq_response(sys_prompt)
-                st.session_state.history.append({"role": "assistant", "content": ai_reply})
-                text_to_speech(ai_reply)
-                st.rerun()
-            else:
-                st.error("Nicht verstanden. Bitte noch einmal sprechen.")
+                if user_text:
+                    st.session_state.history.append({"role": "user", "content": user_text})
+                    
+                    all_words_str = ", ".join(st.session_state.vocab_list)
+                    sys_prompt = (
+                        f"Du bist ein spanischer Sprachpartner. REGEL 1: Du darfst AUSSCHLIESSLICH diese Wörter verwenden: [{all_words_str}]. "
+                        f"REGEL 2: Antworte extrem kurz (max 1 Satz) und STELL SOFORT EINE NEUE FRAGE auf Spanisch. "
+                        f"REGEL 3 (STOPP-REGEL): Antworte mit exakt EINEM Satz und stelle exakt EINE Frage. Erzeuge keine Optionen!"
+                    )
+                    
+                    ai_reply = get_groq_response(sys_prompt)
+                    st.session_state.history.append({"role": "assistant", "content": ai_reply})
+                    text_to_speech(ai_reply)
+                    st.rerun()
+                else:
+                    st.error("Nicht verstanden. Bitte noch einmal sprechen.")
                 
     if st.button("Call beenden (Streak sichern)", type="primary"):
         if st.session_state.history:
@@ -205,4 +213,5 @@ if st.session_state.call_started:
         update_streak()
         st.session_state.call_started = False
         st.session_state.history = []
+        st.session_state.last_processed_audio = None
         st.rerun()
