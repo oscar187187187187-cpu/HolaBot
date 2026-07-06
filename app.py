@@ -84,9 +84,9 @@ def get_groq_response(system_prompt, user_text=None):
         messages.append({"role": "user", "content": user_text})
         
     try:
-        # Hier nutzen wir jetzt das überall freigeschaltete Standard-Modell llama-3.3-70b-versatile
+        # Hier nutzen wir jetzt das überall freigeschaltete Standard-Modell llama-3.1-8b-instant
         completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-8b-instant",
             messages=messages,
             temperature=0.1
         )
