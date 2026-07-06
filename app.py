@@ -31,7 +31,7 @@ if "audio_to_play" not in st.session_state:
 def get_gemini_response(system_prompt, user_text="Start"):
     """Holt die Antwort über die offizielle Gemini-Bibliothek."""
     try:
-        # Wir nutzen Gemini 1.5 Flash, da es extrem schnell ist
+        # Hier nutzen wir das aktuellste, blitzschnelle Modell
         model = genai.GenerativeModel(
             model_name="gemini-1.5-flash",
             system_instruction=system_prompt,
@@ -43,7 +43,6 @@ def get_gemini_response(system_prompt, user_text="Start"):
         # Chat-Historie für Gemini formatieren
         formatted_history = []
         for msg in st.session_state.history:
-            # Gemini nutzt 'user' und 'model' als Rollen
             role = "user" if msg["role"] == "user" else "model"
             formatted_history.append({"role": role, "parts": [msg["content"]]})
             
