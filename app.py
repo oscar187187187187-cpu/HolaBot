@@ -85,7 +85,7 @@ def get_groq_response(system_prompt, user_text=None):
         
     try:
         completion = client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="openai/gpt-oss-120b",
             messages=messages,
             temperature=0.3 # Leicht erhöht, um "hitzige" Wiederholungen zu vermeiden
         )
