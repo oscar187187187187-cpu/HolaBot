@@ -3,7 +3,6 @@ from groq import Groq
 from gtts import gTTS
 import io
 import base64
-import speech_recognition as sr
 import re
 import os
 import json
@@ -125,30 +124,39 @@ def get_groq_response(system_prompt, user_text=None):
         
     try:
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama3-8b-8192",
             messages=messages,
-            temperature=0.1, # Extrem niedrig für maximale Regelbefolgung
-            max_tokens=50
+            temperature=0.1, 
+            max_tokens=60
         )
         return completion.choices[0].message.content
     except Exception as e:
         return f"Lo siento, error de Groq: {str(e)}"
 
 def text_to_speech(text):
-    tts = gTTS(text, lang='es')
-    fp = io.BytesIO()
-    tts.write_to_fp(fp)
-    b64 = base64.b64encode(fp.getvalue()).decode()
-    st.session_state.audio_to_play = b64
+    # ANTI-FREEZE SICHERHEIT: Falls Google streikt, bricht es hier ab und die App läuft weiter!
+    try:
+        tts = gTTS(text, lang='es')
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        b64 = base64.b64encode(fp.getvalue()).decode()
+        st.session_state.audio_to_play = b64
+    except Exception as e:
+        st.error("Audio konnte nicht geladen werden (Google-Timeout). Bitte lies den Text der KI unten!")
+        st.session_state.audio_to_play = None
 
-def transcribe_audio(audio_bytes):
-    recognizer = sr.Recognizer()
-    with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
-        audio_data = recognizer.record(source)
-        try:
-            return recognizer.recognize_google(audio_data, language="es-ES")
-        except:
-            return None
+def transcribe_audio_groq(audio_bytes):
+    # STABILE SPRACHERKENNUNG: Nutzt jetzt Groq Whisper anstelle von Google
+    try:
+        transcription = client.audio.transcriptions.create(
+            file=("audio.wav", audio_bytes),
+            model="whisper-large-v3-turbo",
+            language="es"
+        )
+        return transcription.text
+    except Exception as e:
+        st.error(f"Fehler bei der Spracherkennung: {str(e)}")
+        return None
 
 # --- APP LAYOUT ---
 st.title("🇪🇸 Spanisch Video-Call")
@@ -158,11 +166,9 @@ if not st.session_state.call_started:
     st.write("### 📝 Vorbereitung")
     st.write("Deine Vokabeln sind dauerhaft gespeichert. Drücke einfach auf Start oder setze den alten Call fort!")
     
-    # Automatisch geladene Vokabeln im Textfeld anzeigen
     saved_vocab_data = load_saved_vocab()
     vocab_input = st.text_area("Deine Vokabeln (kommagetrennt oder mit Leerzeichen):", value=saved_vocab_data, height=150)
     
-    # Layout-Spalten für die Buttons
     col1, col2 = st.columns(2)
     
     with col1:
@@ -175,27 +181,25 @@ if not st.session_state.call_started:
                 st.session_state.vocab_list = words
                 st.session_state.call_started = True
                 st.session_state.last_processed_audio = None
-                save_vocab(vocab_input) # Vokabeln für das nächste Mal merken!
+                save_vocab(vocab_input) 
                 
                 all_words_str = ", ".join(words)
-                # FUNKTION 3: Ultra-strikter System-Prompt (Wort-Lockdown)
                 sys_prompt = (
                     f"MANDATORY LOCKDOWN RULE: You are a Spanish conversation partner. "
                     f"ULTRA-STRICT RULE 1: You can ONLY and EXCLUSIVELY use the words from this exact list: [{all_words_str}]. "
                     f"It is strictly FORBIDDEN to use any other Spanish word outside of this list, not even common words like 'bien', 'que', 'haces' UNLESS they are explicitly written in the list! If a word is not listed, you cannot use it. "
                     f"RULE 2: Speak exactly ONE short sentence and ask exactly ONE question. "
-                    f"RULE 3: Do not generate alternatives or lists. Stop instantly."
+                    f"RULE 3: Do not generate alternatives, lists, or comments. Stop instantly."
                 )
                 
-                with st.spinner("Verbindung zu Groq wird aufgebaut..."):
+                with st.spinner("Verbindung wird aufgebaut..."):
                     ai_reply = get_groq_response(sys_prompt, "Start")
                     st.session_state.history.append({"role": "assistant", "content": ai_reply})
-                    save_active_call() # Chat im Dateisystem sichern
+                    save_active_call() 
                     text_to_speech(ai_reply)
                 st.rerun()
 
     with col2:
-        # Chat fortsetzen Option prüfen
         saved_call = load_active_call()
         if saved_call:
             if st.button("🔄 Letzten Call fortsetzen", use_container_width=True):
@@ -247,36 +251,36 @@ if st.session_state.call_started:
         if st.session_state.last_processed_audio != current_audio_bytes:
             st.session_state.last_processed_audio = current_audio_bytes
             
-            with st.spinner("Groq antwortet..."):
-                user_text = transcribe_audio(current_audio_bytes)
+            with st.spinner("Groq hört zu und überlegt..."):
+                user_text = transcribe_audio_groq(current_audio_bytes)
                 
                 if user_text:
                     st.session_state.history.append({"role": "user", "content": user_text})
-                    save_active_call() # Sichern nach User-Eingabe
+                    save_active_call() 
                     
                     all_words_str = ", ".join(st.session_state.vocab_list)
                     sys_prompt = (
                         f"MANDATORY LOCKDOWN RULE: You are a Spanish conversation partner. "
                         f"ULTRA-STRICT RULE 1: You can ONLY and EXCLUSIVELY use the words from this exact list: [{all_words_str}]. "
-                        f"It is strictly FORBIDDEN to use any other Spanish word outside of this list, not even common words like 'bien', 'que', 'haces' UNLESS they are explicitly written in the list! If a word is not listed, you cannot use it. "
+                        f"It is strictly FORBIDDEN to use any other Spanish word outside of this list! "
                         f"RULE 2: Speak exactly ONE short sentence and ask exactly ONE question. "
-                        f"RULE 3: Do not generate alternatives or lists. Stop instantly."
+                        f"RULE 3: Do not generate alternatives or lists. Stop instantly. WRITE ONLY THE SPANISH SENTENCE YOU WILL SPEAK."
                     )
                     
                     ai_reply = get_groq_response(sys_prompt)
                     st.session_state.history.append({"role": "assistant", "content": ai_reply})
-                    save_active_call() # Sichern nach KI-Antwort
+                    save_active_call() 
                     text_to_speech(ai_reply)
                     st.rerun()
                 else:
-                    st.error("Nicht verstanden. Bitte noch einmal sprechen.")
+                    st.error("Ich habe kein Audio erkannt. Bitte sprich noch einmal.")
                 
     if st.button("Call komplett beenden & archivieren", type="primary"):
         if st.session_state.history:
             st.session_state.past_calls.append(st.session_state.history.copy())
         
         update_streak()
-        delete_active_call() # Aktiven Zwischenspeicher löschen, da Call beendet ist
+        delete_active_call() 
         st.session_state.call_started = False
         st.session_state.history = []
         st.session_state.last_processed_audio = None
