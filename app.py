@@ -1,149 +1,212 @@
 import streamlit as st
 from groq import Groq
+from gtts import gTTS
+import io
+import base64
+import re
 import os
+import json
+from datetime import datetime, timedelta
 
-# ==========================================
-# 1. INITIALISIERUNG & SEITEN-SETUP
-# ==========================================
-st.set_page_config(
-    page_title="Professioneller KI-Sprach-Assistent",
-    page_icon="🎙️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# --- EINSTELLUNGEN ---
+st.set_page_config(page_title="Spanisch Video-Call (Groq Edition)", page_icon="🇪🇸", layout="centered")
 
-# Groq Client initialisieren
-# Ersetze "DEIN_GROQ_API_KEY" mit deinem echten Schlüssel, falls du keine Umgebungsvariablen nutzt
-GROQ_API_KEY = "DEIN_GROQ_API_KEY"
-client = Groq(api_key=GROQ_API_KEY)
+# API-Key aus den Streamlit Secrets laden (Für GROQ)
+try:
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+    client = Groq(api_key=GROQ_API_KEY)
+except KeyError:
+    st.error("🚨 Key fehlt! Geh in die Streamlit Settings -> Secrets und füge GROQ_API_KEY = 'gsk_...' hinzu.")
+    st.stop()
 
-# ==========================================
-# 2. SESSION STATE MANAGEMENT (Chat-Verlauf)
-# ==========================================
-# Hier sorgen wir dafür, dass die App sich an das Gespräch erinnert
-if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "system", "content": "Du bist ein hochentwickelter, freundlicher und präzise antwortender KI-Assistent. Antworte immer auf Deutsch."}
-    ]
-
-if "total_tokens" not in st.session_state:
-    st.session_state.total_tokens = 0
-
-# ==========================================
-# 3. SEITENLEISTE (SIDEBAR) & EINSTELLUNGEN
-# ==========================================
-with st.sidebar:
-    st.header("⚙️ Einstellungen")
-    st.write("Konfiguriere deine KI-Sitzung hier.")
-    
-    # Modell-Auswahl für Flexibilität
-    selected_model = st.selectbox(
-        "Chat-Modell wählen:",
-        ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"],
-        index=0,
-        help="Das 8b-Modell ist extrem schnell, das 70b-Modell ist für komplexe Logik gedacht."
-    )
-    
-    st.divider()
-    
-    # Status-Anzeige
-    st.subheader("📊 Statistik")
-    st.write(f"Anzahl Nachrichten im Chat: {len(st.session_state.messages) - 1}")
-    
-    # Button zum Zurücksetzen des Chats
-    if st.button("🔄 Chat-Verlauf löschen", use_container_width=True):
-        st.session_state.messages = [
-            {"role": "system", "content": "Du bist ein hochentwickelter, freundlicher und präzise antwortender KI-Assistent. Antworte immer auf Deutsch."}
-        ]
-        st.rerun()
-
-# ==========================================
-# 4. HAUPTOBERFLÄCHE (UI) DESIGN
-# ==========================================
-st.title("🎙️ KI-Sprach-Assistent Pro")
-st.write("Nutze die Kraft von Groq Whisper für perfekte Spracherkennung und Llama 3.1 für intelligente Antworten.")
-
-# Container für den Chat-Verlauf (wird dynamisch gerendert)
-chat_container = st.container()
-
-# ==========================================
-# 5. INPUT-BEREICH (Audio-Aufnahme)
-# ==========================================
-st.markdown("### 🗣️ Sprich mit der KI")
-audio_value = st.audio_input("Klicke auf das Mikrofon, um deine Aufnahme zu starten")
-
-# Variable für den erkannten Text initialisieren
-user_text_input = ""
-
-if audio_value:
-    audio_bytes = audio_value.read()
-    
-    # --- SCHRITT A: HOCHPRÄZISE AUDIO-TRANSKRIPTION (Groq Whisper) ---
-    with st.spinner("⏳ Whisper analysiert deine Stimme... Bitte warten..."):
+# --- STREAK FUNKTIONEN ---
+def load_streak():
+    if os.path.exists("streak_data.json"):
         try:
-            transcription = client.audio.transcriptions.create(
-                file=("live_speech.wav", audio_bytes),
-                model="whisper-large-v3",
-                response_format="text"
+            with open("streak_data.json", "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {"streak": 0, "last_date": None}
+
+def save_streak(data):
+    with open("streak_data.json", "w") as f:
+        json.dump(data, f)
+
+def update_streak():
+    data = load_streak()
+    today = datetime.now().date().isoformat()
+    yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
+    
+    if data["last_date"] == today:
+        return data["streak"]  # Heute schon gelernt
+    elif data["last_date"] == yesterday:
+        data["streak"] += 1   # Gestern gelernt, Streak geht hoch!
+    else:
+        data["streak"] = 1    # Tag verpasst, Neustart
+        
+    data["last_date"] = today
+    save_streak(data)
+    return data["streak"]
+
+# --- SPEICHER INITIALISIEREN ---
+if "history" not in st.session_state:
+    st.session_state.history = []
+if "vocab_list" not in st.session_state:
+    st.session_state.vocab_list = []
+if "call_started" not in st.session_state:
+    st.session_state.call_started = False
+if "audio_to_play" not in st.session_state:
+    st.session_state.audio_to_play = None
+if "past_calls" not in st.session_state:
+    st.session_state.past_calls = []
+
+streak_info = load_streak()
+
+# --- SIDEBAR DISPLAY ---
+st.sidebar.title("📊 Dein Fortschritt")
+st.sidebar.markdown(f"### 🔥 Streak: **{streak_info['streak']} Tage**")
+if streak_info['last_date'] == datetime.now().date().isoformat():
+    st.sidebar.success("✅ Heute schon gelernt!")
+else:
+    st.sidebar.warning("⚡ Heute noch nicht gelernt!")
+
+# --- FUNKTIONEN FÜR KI & AUDIO ---
+def get_groq_response(system_prompt, user_text=None):
+    """Holt die Antwort über die offizielle Groq-Bibliothek mit dem Standard-Modell."""
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    for msg in st.session_state.history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+        
+    if user_text:
+        messages.append({"role": "user", "content": user_text})
+        
+    try:
+        completion = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=messages,
+            temperature=0.1
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        return f"Lo siento, error de Groq: {str(e)}"
+
+def text_to_speech(text):
+    """Wandelt den Text der KI in eine spanische Sprachnachricht um."""
+    tts = gTTS(text, lang='es')
+    fp = io.BytesIO()
+    tts.write_to_fp(fp)
+    b64 = base64.b64encode(fp.getvalue()).decode()
+    st.session_state.audio_to_play = b64
+
+def transcribe_audio_groq(audio_bytes):
+    """Wandelt deine Sprachaufnahme mit Groqs Whisper-large-v3-turbo in Text um."""
+    try:
+        transcription = client.audio.transcriptions.create(
+            file=("audio.wav", audio_bytes),
+            model="whisper-large-v3-turbo",
+            language="es" # Zwingt die KI, spanisch zu erkennen
+        )
+        return transcription.text
+    except Exception as e:
+        st.error(f"Fehler bei der Spracherkennung: {str(e)}")
+        return None
+
+# --- APP LAYOUT ---
+st.title("🇪🇸 Spanisch Video-Call")
+
+# 1. SETUP-BILDSCHIRM
+if not st.session_state.call_started:
+    st.write("### 📝 Vorbereitung")
+    st.write("Füge hier deine 519 Wörter ein. Groq wird dich aktiv damit ausquetschen!")
+    
+    vocab_input = st.text_area("Deine Vokabeln (kommagetrennt oder mit Leerzeichen):", height=150)
+    
+    if st.button("📞 Video-Call starten", use_container_width=True):
+        words = [w.strip().lower() for w in re.split(r'[,\s\n]+', vocab_input) if w.strip()]
+        
+        if len(words) < 5:
+            st.warning("Bitte füge deine Wörter ein.")
+        else:
+            st.session_state.vocab_list = words
+            st.session_state.call_started = True
+            
+            all_words_str = ", ".join(words)
+            # NEUER PROMPT: Absolut strikt gegen extra Text!
+            sys_prompt = (
+                f"Du bist ein spanischer Sprachpartner. "
+                f"REGEL 1: Du darfst für deine Antworten AUSSCHLIESSLICH Wörter aus dieser Liste verwenden: [{all_words_str}]. Keine anderen! "
+                f"REGEL 2: Du führst das Gespräch aktiv und stellst eine kurze Frage auf Spanisch, um das Gespräch zu eröffnen. "
+                f"REGEL 3 (EXTREM WICHTIG): Schreibe AUSSCHLIESSLICH den Text, den du auch aussprechen willst. Keine Erklärungen, keine Regieanweisungen, keine Kommentare wie 'Hier ist eine Frage:'. Nur der pure spanische Satz!"
             )
             
-            # Wenn die Transkription erfolgreich war, speichern wir den Text
-            if transcription and transcription.strip():
-                user_text_input = transcription.strip()
-            else:
-                st.warning("⚠️ Es wurde kein Ton oder Text erkannt. Bitte versuche es noch einmal.")
+            with st.spinner("Verbindung zu Groq wird aufgebaut..."):
+                ai_reply = get_groq_response(sys_prompt, "Start")
+                st.session_state.history.append({"role": "assistant", "content": ai_reply})
+                text_to_speech(ai_reply)
+            st.rerun()
+
+    if st.session_state.past_calls:
+        st.write("---")
+        with st.expander("📂 Gespeicherte alte Chats anzeigen", expanded=False):
+            for i, past_chat in enumerate(reversed(st.session_state.past_calls)):
+                st.markdown(f"##### 💾 Gespräch Durchlauf {len(st.session_state.past_calls) - i}")
+                for msg in past_chat:
+                    role = "Du" if msg["role"] == "user" else "Groq KI"
+                    st.markdown(f"**{role}:** {msg['content']}")
+                st.write("---")
+
+# 2. CALL-BILDSCHIRM
+if st.session_state.call_started:
+    st.markdown("""
+        <div style="background-color: #1E1E1E; border-radius: 20px; padding: 40px; text-align: center; margin-bottom: 20px;">
+            <h1 style='font-size: 120px; margin: 0;'>👤</h1>
+            <p style="color: #4CAF50; margin-top: 10px;">Groq Video-Call Aktiv</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    if st.session_state.audio_to_play:
+        audio_html = f'<audio autoplay="true"><source src="data:audio/mp3;base64,{st.session_state.audio_to_play}" type="audio/mp3"></audio>'
+        st.markdown(audio_html, unsafe_allow_html=True)
+        st.session_state.audio_to_play = None 
+        
+    with st.expander("Transkript anzeigen (zum Nachlesen)"):
+        for msg in st.session_state.history:
+            role = "Du" if msg["role"] == "user" else "Groq KI"
+            st.markdown(f"**{role}:** {msg['content']}")
+            
+    st.write("---")
+    st.write("### 🎙️ Du bist dran")
+    audio_value = st.audio_input("Halte den Knopf zum Sprechen:")
+    
+    if audio_value:
+        with st.spinner("Groq Whisper übersetzt & KI antwortet..."):
+            # Nutzt jetzt Groq Whisper für Sprache-zu-Text!
+            user_text = transcribe_audio_groq(audio_value.getvalue())
+            
+            if user_text:
+                st.session_state.history.append({"role": "user", "content": user_text})
                 
-        except Exception as e:
-            st.error(f"❌ Fehler bei der Spracherkennung (Groq Whisper): {e}")
-
-# ==========================================
-# 6. KI-ANTWORT-LOGIK & VERLAUFS-SPEICHERUNG
-# ==========================================
-# Wenn wir einen Text aus der Audioaufnahme generiert haben, verarbeiten wir ihn hier
-if user_text_input:
-    
-    # 1. Benutzernachricht dem Chat-Verlauf hinzufügen
-    st.session_state.messages.append({"role": "user", "content": user_text_input})
-    
-    # 2. --- SCHRITT B: TEXT-GENERIERUNG (Llama 3.1) ---
-    with st.spinner("🤖 Die KI analysiert den Text und formuliert eine Antwort..."):
-        try:
-            chat_completion = client.chat.completions.create(
-                messages=st.session_state.messages, # Der komplette Verlauf wird mitgesendet!
-                model=selected_model,
-                temperature=0.7,
-                max_tokens=1024
-            )
-            
-            # Antwort auslesen
-            ai_response = chat_completion.choices[0].message.content
-            
-            # 3. KI-Antwort dem Chat-Verlauf hinzufügen
-            st.session_state.messages.append({"role": "assistant", "content": ai_response})
-            
-        except Exception as e:
-            st.error(f"❌ Fehler bei der Generierung der KI-Antwort: {e}")
-            # Falls es schiefgeht, entfernen wir die letzte User-Nachricht, damit das System synchron bleibt
-            st.session_state.messages.pop()
-
-# ==========================================
-# 7. CHAT-HISTORIE AUF DER WEBSEITE ANZEIGEN
-# ==========================================
-# Wir rendern den Verlauf im dafür vorgesehenen Container ganz oben, damit es wie ein echter Chat aussieht
-with chat_container:
-    for msg in st.session_state.messages:
-        # System-Prompts überspringen wir in der Anzeige
-        if msg["role"] == "system":
-            continue
-            
-        # Chat-Blasen je nach Rolle anzeigen
-        if msg["role"] == "user":
-            with st.chat_message("user", avatar="👤"):
-                st.write(msg["content"])
-        elif msg["role"] == "assistant":
-            with st.chat_message("assistant", avatar="🤖"):
-                st.write(msg["content"])
-
-# Fußzeile
-st.markdown("---")
-st.caption("Entwickelt mit Streamlit, Groq Whisper-v3 und Llama-3.1 AI Modellen. Schnell. Präzise. Stabil.")
+                all_words_str = ", ".join(st.session_state.vocab_list)
+                sys_prompt = (
+                    f"Du bist ein spanischer Sprachpartner. REGEL 1: Du darfst AUSSCHLIESSLICH diese Wörter verwenden: [{all_words_str}]. "
+                    f"REGEL 2: Du bist der Interviewer! Antworte extrem kurz (max 1 Satz) auf das, was der User sagt, und STELL SOFORT EINE NEUE FRAGE auf Spanisch. "
+                    f"REGEL 3 (EXTREM WICHTIG): Schreibe AUSSCHLIESSLICH den Text, den du sagst. Keine Anmerkungen, keine Übersetzungen, keine Einleitungen. Nur der reine spanische Satz!"
+                )
+                
+                ai_reply = get_groq_response(sys_prompt)
+                st.session_state.history.append({"role": "assistant", "content": ai_reply})
+                text_to_speech(ai_reply)
+                st.rerun()
+            else:
+                st.error("Nicht verstanden. Bitte noch einmal sprechen.")
+                
+    if st.button("Call beenden (Streak sichern)", type="primary"):
+        if st.session_state.history:
+            st.session_state.past_calls.append(st.session_state.history.copy())
+        
+        update_streak()
+        st.session_state.call_started = False
+        st.session_state.history = []
+        st.rerun()
