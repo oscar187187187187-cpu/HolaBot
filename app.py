@@ -84,7 +84,7 @@ def get_groq_response(system_prompt, user_text=None):
         messages.append({"role": "user", "content": user_text})
         
     try:
-        # Hier nutzen wir jetzt das überall freigeschaltete Standard-Modell llama3-8b-8192
+        # Hier nutzen wir jetzt das überall freigeschaltete Standard-Modell llama-3.3-70b-versatile
         completion = client.chat.completions.create(
             model="llama3-8b-8192",
             messages=messages,
@@ -118,7 +118,7 @@ st.title("🇪🇸 Spanisch Video-Call (Groq Edition)")
 # 1. SETUP-BILDSCHIRM
 if not st.session_state.call_started:
     st.write("### 📝 Vorbereitung")
-    st.write("Füge hier deine 519 Wörter ein. Groq wird dich aktiv damit ausquetschen!")
+    st.write("Füge hier deine Wörter ein. Groq wird dich aktiv damit ausquetschen!")
     
     vocab_input = st.text_area("Deine Vokabeln (kommagetrennt oder mit Leerzeichen):", height=150)
     
