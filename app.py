@@ -84,9 +84,9 @@ def get_groq_response(system_prompt, user_text=None):
         messages.append({"role": "user", "content": user_text})
         
     try:
-        # Hier nutzen wir jetzt das überall freigeschaltete Standard-Modell llama-3.3-70b-versatile
+        # Hier nutzen wir jetzt das überall freigeschaltete Standard-Modell openai/gpt-oss-120b
         completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=messages,
             temperature=0.1
         )
