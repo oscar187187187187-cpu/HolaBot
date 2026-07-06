@@ -74,7 +74,7 @@ else:
 
 # --- FUNKTIONEN FÜR KI & AUDIO ---
 def get_groq_response(system_prompt, user_text=None):
-    """Holt die Antwort über die offizielle Groq-Bibliothek mit dem Standard-Modell."""
+    """Holt die Antwort über die offizielle Groq-Bibliothek."""
     messages = [{"role": "system", "content": system_prompt}]
     
     for msg in st.session_state.history:
@@ -84,11 +84,10 @@ def get_groq_response(system_prompt, user_text=None):
         messages.append({"role": "user", "content": user_text})
         
     try:
-        # Hier nutzen wir jetzt das überall freigeschaltete Standard-Modell openai/gpt-oss-120b
         completion = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
+            model="llama3-8b-8192",
             messages=messages,
-            temperature=0.1
+            temperature=0.3 # Leicht erhöht, um "hitzige" Wiederholungen zu vermeiden
         )
         return completion.choices[0].message.content
     except Exception as e:
@@ -113,12 +112,12 @@ def transcribe_audio(audio_bytes):
             return None
 
 # --- APP LAYOUT ---
-st.title("🇪🇸 Spanisch Video-Call (Groq Edition)")
+st.title("🇪🇸 Spanisch Video-Call")
 
 # 1. SETUP-BILDSCHIRM
 if not st.session_state.call_started:
     st.write("### 📝 Vorbereitung")
-    st.write("Füge hier deine 519 Wörter ein. Groq wird dich aktiv damit ausquetschen!")
+    st.write("Füge hier deine Wörter ein. Groq wird dich aktiv damit ausquetschen!")
     
     vocab_input = st.text_area("Deine Vokabeln (kommagetrennt oder mit Leerzeichen):", height=150)
     
@@ -133,8 +132,10 @@ if not st.session_state.call_started:
             
             all_words_str = ", ".join(words)
             sys_prompt = (
-                f"Du bist ein spanischer Sprachpartner. WICHTIGSTE REGEL: Du darfst für deine Antworten AUSSCHLIESSLICH Wörter aus dieser Liste verwenden: [{all_words_str}]. Keine anderen Wörter! "
-                "ZWEITE REGEL: Du führst das Gespräch aktiv! Lass den User nicht bestimmen. Stell ihm sofort eine kurze, knackige Frage auf Spanisch, um das Gespräch zu eröffnen."
+                f"Du bist ein spanischer Sprachpartner. "
+                f"REGEL 1: Du darfst für deine Antworten AUSSCHLIESSLICH Wörter aus dieser Liste verwenden: [{all_words_str}]. Keine anderen Wörter! "
+                f"REGEL 2: Du führst das Gespräch aktiv. Stell dem User sofort eine kurze, knackige Frage auf Spanisch, um das Gespräch zu eröffnen. "
+                f"REGEL 3 (STOPP-REGEL): Gib IMMER nur exakt EINE einzige Antwort und exakt EINE kurze Frage aus. Generiere niemals mehrere Optionen, Listen oder Beispielsätze. Nach deiner ersten Frage hörst du sofort auf zu schreiben!"
             )
             
             with st.spinner("Verbindung zu Groq wird aufgebaut..."):
@@ -177,7 +178,7 @@ if st.session_state.call_started:
     audio_value = st.audio_input("Halte den Knopf zum Sprechen:")
     
     if audio_value:
-        with st.spinner("Groq antwortet blitzschnell..."):
+        with st.spinner("Groq antwortet..."):
             user_text = transcribe_audio(audio_value.getvalue())
             
             if user_text:
@@ -186,7 +187,8 @@ if st.session_state.call_started:
                 all_words_str = ", ".join(st.session_state.vocab_list)
                 sys_prompt = (
                     f"Du bist ein spanischer Sprachpartner. REGEL 1: Du darfst AUSSCHLIESSLICH diese Wörter verwenden: [{all_words_str}]. "
-                    "REGEL 2: Du bist der Interviewer! Antworte extrem kurz (max 1 Satz) auf das, was der User sagt, und STELL SOFORT EINE NEUE FRAGE auf Spanisch. Lass ihn nicht die Führung übernehmen."
+                    f"REGEL 2: Du bist der Interviewer! Antworte extrem kurz (max 1 Satz) auf das, was der User sagt, und STELL SOFORT EINE NEUE FRAGE auf Spanisch. "
+                    f"REGEL 3 (STOPP-REGEL): Antworte mit exakt EINEM Satz und stelle exakt EINE Frage. Erzeuge keine Optionen, keine Listen und höre nach der Frage sofort auf!"
                 )
                 
                 ai_reply = get_groq_response(sys_prompt)
