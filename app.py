@@ -33,7 +33,7 @@ def get_gemini_response(system_prompt, user_text="Start"):
     try:
         # Hier nutzen wir das aktuellste, blitzschnelle Modell
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-2.5-flash",
             system_instruction=system_prompt,
             generation_config=genai.GenerationConfig(
                 temperature=0.1 # Sehr niedrig für maximale Regeltreue bei deinen Wörtern
