@@ -125,7 +125,7 @@ def get_groq_response(system_prompt, user_text=None):
         
     try:
         completion = client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",
             messages=messages,
             temperature=0.1, # Extrem niedrig für maximale Regelbefolgung
             max_tokens=50
