@@ -84,9 +84,9 @@ def get_groq_response(system_prompt, user_text=None):
         messages.append({"role": "user", "content": user_text})
         
     try:
-        # Hier nutzen wir jetzt das überall freigeschaltete Standard-Modell whisper-large-v3-turbo
+        # Hier nutzen wir jetzt das überall freigeschaltete Standard-Modell openai/gpt-oss-20b
         completion = client.chat.completions.create(
-            model="whisper-large-v3-turbo",
+            model="openai/gpt-oss-20b",
             messages=messages,
             temperature=0.1
         )
