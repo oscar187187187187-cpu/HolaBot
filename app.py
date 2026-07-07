@@ -64,7 +64,7 @@ def save_vocab(vocab_string):
     with open("saved_vocab.json", "w", encoding="utf-8") as f:
         json.dump({"vocab": vocab_string}, f, ensure_ascii=False)
 
-# NEU: Alte Chats DAUERHAFT speichern und laden
+# Alte Chats DAUERHAFT speichern und laden
 def load_past_calls():
     if os.path.exists("past_calls.json"):
         try:
@@ -76,7 +76,6 @@ def load_past_calls():
 
 def save_completed_call(history, vocab_list):
     calls = load_past_calls()
-    # Speichert Datum, Vokabeln und Chat-Verlauf
     new_call = {
         "date": datetime.now().strftime("%d.%m.%Y - %H:%M"),
         "vocab_list": vocab_list,
@@ -90,7 +89,8 @@ def save_completed_call(history, vocab_list):
 def save_active_call():
     data = {
         "history": st.session_state.history,
-        "vocab_list": st.session_state.vocab_list
+        "vocab_list": st.session_state.vocab_list,
+        "difficulty": st.session_state.difficulty # Schwierigkeit für Reload mitspeichern
     }
     with open("active_call.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
@@ -122,6 +122,9 @@ if "audio_to_play" not in st.session_state:
     st.session_state.audio_to_play = None
 if "last_processed_audio" not in st.session_state:
     st.session_state.last_processed_audio = None
+# NEU: Schwierigkeitsgrad im Session State
+if "difficulty" not in st.session_state:
+    st.session_state.difficulty = "🟡 Mittel"
 
 streak_info = load_streak()
 past_saved_calls = load_past_calls()
@@ -178,13 +181,48 @@ def transcribe_audio_groq(audio_bytes):
         st.error(f"Fehler bei der Spracherkennung: {str(e)}")
         return None
 
+# --- DYNAMISCHER SYSTEM PROMPT ---
+def get_system_prompt(words_list, difficulty_level, is_start=False, start_word=None):
+    """Generiert den perfekten Prompt basierend auf der gewählten Schwierigkeit."""
+    all_words_str = ", ".join(words_list)
+    
+    # Basis-Lockdown (gilt für ALLE Level)
+    base_prompt = (
+        f"ABSOLUTES VERBOT: Du bist ein Sprachpartner, aber du darfst AUSSCHLIESSLICH die folgenden Wörter benutzen: [{all_words_str}]. "
+        f"Du darfst KEIN EINZIGES WORT verwenden, das nicht in dieser Liste steht. Keine Füllwörter, keine Artikel ('el', 'la', 'un'), keine Ausnahmen! "
+        f"Es ist völlig egal, ob deine Grammatik dadurch falsch oder unnatürlich ist. Hauptsache, du nutzt nur diese Wörter! "
+    )
+    
+    # Schwierigkeits-Modifikator
+    if difficulty_level == "🟢 Leicht":
+        diff_prompt = "NIVEAU LEICHT: Verwende extrem kurze Sätze (maximal 3-5 Wörter). Stelle sehr simple, direkte Fragen, die leicht zu beantworten sind."
+    elif difficulty_level == "🔴 Schwer":
+        diff_prompt = "NIVEAU SCHWER: Verwende längere Sätze. Stelle komplexere, offenere Fragen, die den User zum Nachdenken zwingen."
+    else: # Mittel
+        diff_prompt = "NIVEAU MITTEL: Verwende normale Sätze und stelle thematisch passende Fragen."
+
+    # Start- oder Laufend-Modifikator
+    if is_start:
+        action_prompt = f"STARTE DAS GESPRÄCH: Stelle mir sofort eine Frage. Du MUSST das Wort '{start_word}' in deiner Frage verwenden! Gib exakt EINEN kurzen Satz aus. Generiere keine Listen."
+    else:
+        action_prompt = "Reagiere kurz auf den User und stelle sofort eine neue Frage. Gib exakt EINEN Satz aus. Generiere keine Listen oder Erklärungen."
+        
+    return f"{base_prompt} {diff_prompt} {action_prompt}"
+
+
 # --- APP LAYOUT ---
 st.title("🇪🇸 Spanisch Video-Call")
 
 # 1. SETUP-BILDSCHIRM
 if not st.session_state.call_started:
     st.write("### 📝 Vorbereitung")
-    st.write("Deine Vokabeln sind dauerhaft gespeichert. Drücke auf Start oder setze einen alten Call fort!")
+    
+    # NEU: Schwierigkeitsgrad-Auswahl
+    selected_difficulty = st.selectbox(
+        "Wähle dein Sprachniveau:",
+        ("🟢 Leicht", "🟡 Mittel", "🔴 Schwer"),
+        index=1 # Mittel ist Standard
+    )
     
     saved_vocab_data = load_saved_vocab()
     vocab_input = st.text_area("Deine Vokabeln (kommagetrennt oder mit Leerzeichen):", value=saved_vocab_data, height=150)
@@ -199,24 +237,15 @@ if not st.session_state.call_started:
                 st.warning("Bitte füge deine Wörter ein.")
             else:
                 st.session_state.vocab_list = words
+                st.session_state.difficulty = selected_difficulty
                 st.session_state.call_started = True
                 st.session_state.last_processed_audio = None
                 save_vocab(vocab_input) 
                 
-                # ZUFALLS-WORT FÜR DEN START ZIEHEN (Gegen Langeweile)
                 random_start_word = random.choice(words)
-                all_words_str = ", ".join(words)
+                sys_prompt = get_system_prompt(words, selected_difficulty, is_start=True, start_word=random_start_word)
                 
-                # EXTREMER SYSTEM PROMPT
-                sys_prompt = (
-                    f"ABSOLUTES VERBOT: Du bist ein Sprachpartner, aber du darfst AUSSCHLIESSLICH die folgenden Wörter benutzen: [{all_words_str}]. "
-                    f"Du darfst KEIN EINZIGES WORT verwenden, das nicht in dieser Liste steht. Keine Füllwörter, keine Artikel ('el', 'la', 'un'), keine Ausnahmen, es sei denn, sie stehen in der Liste! "
-                    f"Es ist völlig egal, ob deine Grammatik dadurch falsch oder unnatürlich ist. Hauptsache, du nutzt nur diese Wörter! "
-                    f"STARTE DAS GESPRÄCH: Stelle mir sofort eine Frage. Du MUSST das Wort '{random_start_word}' in deiner Frage verwenden! "
-                    f"Gib exakt EINEN kurzen Satz aus. Generiere keine Listen."
-                )
-                
-                with st.spinner("Verbindung wird aufgebaut..."):
+                with st.spinner(f"Verbindung wird aufgebaut ({selected_difficulty})..."):
                     ai_reply = get_groq_response(sys_prompt, "Start")
                     st.session_state.history.append({"role": "assistant", "content": ai_reply})
                     save_active_call() 
@@ -229,13 +258,14 @@ if not st.session_state.call_started:
             if st.button("🔄 Laufenden Call fortsetzen", use_container_width=True):
                 st.session_state.history = saved_call["history"]
                 st.session_state.vocab_list = saved_call["vocab_list"]
+                # Schwierigkeit des gespeicherten Calls laden (falls vorhanden), sonst Standard
+                st.session_state.difficulty = saved_call.get("difficulty", "🟡 Mittel")
                 st.session_state.call_started = True
                 st.session_state.last_processed_audio = None
                 st.rerun()
         else:
             st.button("🔄 Kein aktiver Call offen", use_container_width=True, disabled=True)
 
-    # ARCHIVIERTE ALTE CHATS ZUM FORTSETZEN ANZEIGEN
     if past_saved_calls:
         st.write("---")
         st.write("### 📂 Deine gespeicherten Gespräche")
@@ -245,10 +275,10 @@ if not st.session_state.call_started:
                     role = "Du" if msg["role"] == "user" else "Groq KI"
                     st.markdown(f"**{role}:** {msg['content']}")
                 
-                # NEU: BUTTON UM EINEN ALTEN CHAT WIEDER AUFZUNEHMEN
                 if st.button(f"▶️ Dieses Gespräch fortsetzen", key=f"resume_{i}"):
                     st.session_state.history = past_chat['history'].copy()
                     st.session_state.vocab_list = past_chat['vocab_list'].copy()
+                    st.session_state.difficulty = "🟡 Mittel" # Bei ganz alten Chats Standard nehmen
                     st.session_state.call_started = True
                     st.session_state.last_processed_audio = None
                     save_active_call()
@@ -256,10 +286,10 @@ if not st.session_state.call_started:
 
 # 2. CALL-BILDSCHIRM
 if st.session_state.call_started:
-    st.markdown("""
+    st.markdown(f"""
         <div style="background-color: #1E1E1E; border-radius: 20px; padding: 40px; text-align: center; margin-bottom: 20px;">
             <h1 style='font-size: 120px; margin: 0;'>👤</h1>
-            <p style="color: #4CAF50; margin-top: 10px;">Groq Video-Call Aktiv</p>
+            <p style="color: #4CAF50; margin-top: 10px;">Groq Video-Call Aktiv <br><small>Niveau: {st.session_state.difficulty}</small></p>
             <small style="color: #888;">Du kannst das Fenster jederzeit schließen. Der Chat wird automatisch gespeichert!</small>
         </div>
     """, unsafe_allow_html=True)
@@ -291,15 +321,8 @@ if st.session_state.call_started:
                     st.session_state.history.append({"role": "user", "content": user_text})
                     save_active_call() 
                     
-                    all_words_str = ", ".join(st.session_state.vocab_list)
-                    
-                    # EXTREMER SYSTEM PROMPT FÜR DEN LAUFENDEN CALL
-                    sys_prompt = (
-                        f"ABSOLUTES VERBOT: Du bist ein Sprachpartner, aber du darfst AUSSCHLIESSLICH die folgenden Wörter benutzen: [{all_words_str}]. "
-                        f"Du darfst KEIN EINZIGES WORT verwenden, das nicht in dieser Liste steht. Keine Füllwörter, keine Artikel ('el', 'la', 'un'), keine Ausnahmen! "
-                        f"Es ist völlig egal, ob deine Grammatik dadurch falsch oder unnatürlich ist. Hauptsache, du nutzt nur diese Wörter! "
-                        f"Reagiere kurz auf den User und stelle sofort eine neue Frage. Gib exakt EINEN Satz aus. Generiere keine Listen oder Erklärungen."
-                    )
+                    # Dynamischer System Prompt (Laufender Call)
+                    sys_prompt = get_system_prompt(st.session_state.vocab_list, st.session_state.difficulty, is_start=False)
                     
                     ai_reply = get_groq_response(sys_prompt)
                     st.session_state.history.append({"role": "assistant", "content": ai_reply})
@@ -311,7 +334,6 @@ if st.session_state.call_started:
                 
     if st.button("Call beenden & dauerhaft archivieren", type="primary"):
         if st.session_state.history:
-            # Speichert den Verlauf in der permanenten Historie
             save_completed_call(st.session_state.history, st.session_state.vocab_list)
         
         update_streak()
