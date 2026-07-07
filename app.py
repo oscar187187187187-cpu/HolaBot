@@ -3,13 +3,14 @@ from groq import Groq
 from gtts import gTTS
 import io
 import base64
-import re
 import os
 import json
+import re
+import random
 from datetime import datetime, timedelta
 
 # --- EINSTELLUNGEN ---
-st.set_page_config(page_title="Spanisch Video-Call (Groq)", page_icon="🇪🇸", layout="centered")
+st.set_page_config(page_title="Spanisch Video-Call", page_icon="🇪🇸", layout="centered")
 
 # API-Key aus den Streamlit Secrets laden
 try:
@@ -19,7 +20,7 @@ except KeyError:
     st.error("🚨 Key fehlt! Geh in die Streamlit Settings -> Secrets und füge GROQ_API_KEY = 'gsk_...' hinzu.")
     st.stop()
 
-# --- DATEN-SPEICHER FUNKTIONEN (STREAK, VOKABELN, CHAT) ---
+# --- DATEN-SPEICHER FUNKTIONEN ---
 def load_streak():
     if os.path.exists("streak_data.json"):
         try:
@@ -49,7 +50,7 @@ def update_streak():
     save_streak(data)
     return data["streak"]
 
-# FUNKTION 1: Vokabeln dauerhaft speichern & laden
+# Vokabeln dauerhaft speichern
 def load_saved_vocab():
     if os.path.exists("saved_vocab.json"):
         try:
@@ -63,7 +64,29 @@ def save_vocab(vocab_string):
     with open("saved_vocab.json", "w", encoding="utf-8") as f:
         json.dump({"vocab": vocab_string}, f, ensure_ascii=False)
 
-# FUNKTION 2: Laufenden Chat sichern & wiederherstellen
+# NEU: Alte Chats DAUERHAFT speichern und laden
+def load_past_calls():
+    if os.path.exists("past_calls.json"):
+        try:
+            with open("past_calls.json", "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+    return []
+
+def save_completed_call(history, vocab_list):
+    calls = load_past_calls()
+    # Speichert Datum, Vokabeln und Chat-Verlauf
+    new_call = {
+        "date": datetime.now().strftime("%d.%m.%Y - %H:%M"),
+        "vocab_list": vocab_list,
+        "history": history
+    }
+    calls.append(new_call)
+    with open("past_calls.json", "w", encoding="utf-8") as f:
+        json.dump(calls, f, ensure_ascii=False)
+
+# Laufenden Chat für Reloads sichern
 def save_active_call():
     data = {
         "history": st.session_state.history,
@@ -97,12 +120,11 @@ if "call_started" not in st.session_state:
     st.session_state.call_started = False
 if "audio_to_play" not in st.session_state:
     st.session_state.audio_to_play = None
-if "past_calls" not in st.session_state:
-    st.session_state.past_calls = []
 if "last_processed_audio" not in st.session_state:
     st.session_state.last_processed_audio = None
 
 streak_info = load_streak()
+past_saved_calls = load_past_calls()
 
 # --- SIDEBAR DISPLAY ---
 st.sidebar.title("📊 Dein Fortschritt")
@@ -124,7 +146,7 @@ def get_groq_response(system_prompt, user_text=None):
         
     try:
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama3-8b-8192",
             messages=messages,
             temperature=0.1, 
             max_tokens=60
@@ -134,7 +156,6 @@ def get_groq_response(system_prompt, user_text=None):
         return f"Lo siento, error de Groq: {str(e)}"
 
 def text_to_speech(text):
-    # ANTI-FREEZE SICHERHEIT: Falls Google streikt, bricht es hier ab und die App läuft weiter!
     try:
         tts = gTTS(text, lang='es')
         fp = io.BytesIO()
@@ -142,11 +163,10 @@ def text_to_speech(text):
         b64 = base64.b64encode(fp.getvalue()).decode()
         st.session_state.audio_to_play = b64
     except Exception as e:
-        st.error("Audio konnte nicht geladen werden (Google-Timeout). Bitte lies den Text der KI unten!")
+        st.error("Audio konnte nicht geladen werden. Bitte lies den Text der KI unten!")
         st.session_state.audio_to_play = None
 
 def transcribe_audio_groq(audio_bytes):
-    # STABILE SPRACHERKENNUNG: Nutzt jetzt Groq Whisper anstelle von Google
     try:
         transcription = client.audio.transcriptions.create(
             file=("audio.wav", audio_bytes),
@@ -164,7 +184,7 @@ st.title("🇪🇸 Spanisch Video-Call")
 # 1. SETUP-BILDSCHIRM
 if not st.session_state.call_started:
     st.write("### 📝 Vorbereitung")
-    st.write("Deine Vokabeln sind dauerhaft gespeichert. Drücke einfach auf Start oder setze den alten Call fort!")
+    st.write("Deine Vokabeln sind dauerhaft gespeichert. Drücke auf Start oder setze einen alten Call fort!")
     
     saved_vocab_data = load_saved_vocab()
     vocab_input = st.text_area("Deine Vokabeln (kommagetrennt oder mit Leerzeichen):", value=saved_vocab_data, height=150)
@@ -183,13 +203,17 @@ if not st.session_state.call_started:
                 st.session_state.last_processed_audio = None
                 save_vocab(vocab_input) 
                 
+                # ZUFALLS-WORT FÜR DEN START ZIEHEN (Gegen Langeweile)
+                random_start_word = random.choice(words)
                 all_words_str = ", ".join(words)
+                
+                # EXTREMER SYSTEM PROMPT
                 sys_prompt = (
-                    f"MANDATORY LOCKDOWN RULE: You are a Spanish conversation partner. "
-                    f"ULTRA-STRICT RULE 1: You can ONLY and EXCLUSIVELY use the words from this exact list: [{all_words_str}]. "
-                    f"It is strictly FORBIDDEN to use any other Spanish word outside of this list, not even common words like 'bien', 'que', 'haces' UNLESS they are explicitly written in the list! If a word is not listed, you cannot use it. "
-                    f"RULE 2: Speak exactly ONE short sentence and ask exactly ONE question. "
-                    f"RULE 3: Do not generate alternatives, lists, or comments. Stop instantly."
+                    f"ABSOLUTES VERBOT: Du bist ein Sprachpartner, aber du darfst AUSSCHLIESSLICH die folgenden Wörter benutzen: [{all_words_str}]. "
+                    f"Du darfst KEIN EINZIGES WORT verwenden, das nicht in dieser Liste steht. Keine Füllwörter, keine Artikel ('el', 'la', 'un'), keine Ausnahmen, es sei denn, sie stehen in der Liste! "
+                    f"Es ist völlig egal, ob deine Grammatik dadurch falsch oder unnatürlich ist. Hauptsache, du nutzt nur diese Wörter! "
+                    f"STARTE DAS GESPRÄCH: Stelle mir sofort eine Frage. Du MUSST das Wort '{random_start_word}' in deiner Frage verwenden! "
+                    f"Gib exakt EINEN kurzen Satz aus. Generiere keine Listen."
                 )
                 
                 with st.spinner("Verbindung wird aufgebaut..."):
@@ -202,7 +226,7 @@ if not st.session_state.call_started:
     with col2:
         saved_call = load_active_call()
         if saved_call:
-            if st.button("🔄 Letzten Call fortsetzen", use_container_width=True):
+            if st.button("🔄 Laufenden Call fortsetzen", use_container_width=True):
                 st.session_state.history = saved_call["history"]
                 st.session_state.vocab_list = saved_call["vocab_list"]
                 st.session_state.call_started = True
@@ -211,15 +235,24 @@ if not st.session_state.call_started:
         else:
             st.button("🔄 Kein aktiver Call offen", use_container_width=True, disabled=True)
 
-    if st.session_state.past_calls:
+    # ARCHIVIERTE ALTE CHATS ZUM FORTSETZEN ANZEIGEN
+    if past_saved_calls:
         st.write("---")
-        with st.expander("📂 Gespeicherte alte Chats anzeigen", expanded=False):
-            for i, past_chat in enumerate(reversed(st.session_state.past_calls)):
-                st.markdown(f"##### 💾 Gespräch Durchlauf {len(st.session_state.past_calls) - i}")
-                for msg in past_chat:
+        st.write("### 📂 Deine gespeicherten Gespräche")
+        for i, past_chat in enumerate(reversed(past_saved_calls)):
+            with st.expander(f"💾 Gespräch vom {past_chat['date']}"):
+                for msg in past_chat['history']:
                     role = "Du" if msg["role"] == "user" else "Groq KI"
                     st.markdown(f"**{role}:** {msg['content']}")
-                st.write("---")
+                
+                # NEU: BUTTON UM EINEN ALTEN CHAT WIEDER AUFZUNEHMEN
+                if st.button(f"▶️ Dieses Gespräch fortsetzen", key=f"resume_{i}"):
+                    st.session_state.history = past_chat['history'].copy()
+                    st.session_state.vocab_list = past_chat['vocab_list'].copy()
+                    st.session_state.call_started = True
+                    st.session_state.last_processed_audio = None
+                    save_active_call()
+                    st.rerun()
 
 # 2. CALL-BILDSCHIRM
 if st.session_state.call_started:
@@ -259,12 +292,13 @@ if st.session_state.call_started:
                     save_active_call() 
                     
                     all_words_str = ", ".join(st.session_state.vocab_list)
+                    
+                    # EXTREMER SYSTEM PROMPT FÜR DEN LAUFENDEN CALL
                     sys_prompt = (
-                        f"MANDATORY LOCKDOWN RULE: You are a Spanish conversation partner. "
-                        f"ULTRA-STRICT RULE 1: You can ONLY and EXCLUSIVELY use the words from this exact list: [{all_words_str}]. "
-                        f"It is strictly FORBIDDEN to use any other Spanish word outside of this list! "
-                        f"RULE 2: Speak exactly ONE short sentence and ask exactly ONE question. "
-                        f"RULE 3: Do not generate alternatives or lists. Stop instantly. WRITE ONLY THE SPANISH SENTENCE YOU WILL SPEAK."
+                        f"ABSOLUTES VERBOT: Du bist ein Sprachpartner, aber du darfst AUSSCHLIESSLICH die folgenden Wörter benutzen: [{all_words_str}]. "
+                        f"Du darfst KEIN EINZIGES WORT verwenden, das nicht in dieser Liste steht. Keine Füllwörter, keine Artikel ('el', 'la', 'un'), keine Ausnahmen! "
+                        f"Es ist völlig egal, ob deine Grammatik dadurch falsch oder unnatürlich ist. Hauptsache, du nutzt nur diese Wörter! "
+                        f"Reagiere kurz auf den User und stelle sofort eine neue Frage. Gib exakt EINEN Satz aus. Generiere keine Listen oder Erklärungen."
                     )
                     
                     ai_reply = get_groq_response(sys_prompt)
@@ -275,9 +309,10 @@ if st.session_state.call_started:
                 else:
                     st.error("Ich habe kein Audio erkannt. Bitte sprich noch einmal.")
                 
-    if st.button("Call komplett beenden & archivieren", type="primary"):
+    if st.button("Call beenden & dauerhaft archivieren", type="primary"):
         if st.session_state.history:
-            st.session_state.past_calls.append(st.session_state.history.copy())
+            # Speichert den Verlauf in der permanenten Historie
+            save_completed_call(st.session_state.history, st.session_state.vocab_list)
         
         update_streak()
         delete_active_call() 
