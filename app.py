@@ -7,6 +7,7 @@ import os
 import json
 import re
 import random
+import threading
 from datetime import datetime, timedelta
 
 # --- EINSTELLUNGEN ---
@@ -50,7 +51,6 @@ def update_streak():
     save_streak(data)
     return data["streak"]
 
-# Vokabeln dauerhaft speichern
 def load_saved_vocab():
     if os.path.exists("saved_vocab.json"):
         try:
@@ -64,7 +64,6 @@ def save_vocab(vocab_string):
     with open("saved_vocab.json", "w", encoding="utf-8") as f:
         json.dump({"vocab": vocab_string}, f, ensure_ascii=False)
 
-# Alte Chats DAUERHAFT speichern und laden
 def load_past_calls():
     if os.path.exists("past_calls.json"):
         try:
@@ -85,12 +84,11 @@ def save_completed_call(history, vocab_list):
     with open("past_calls.json", "w", encoding="utf-8") as f:
         json.dump(calls, f, ensure_ascii=False)
 
-# Laufenden Chat für Reloads sichern
 def save_active_call():
     data = {
         "history": st.session_state.history,
         "vocab_list": st.session_state.vocab_list,
-        "difficulty": st.session_state.difficulty # Schwierigkeit für Reload mitspeichern
+        "difficulty": st.session_state.difficulty 
     }
     with open("active_call.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
@@ -122,7 +120,6 @@ if "audio_to_play" not in st.session_state:
     st.session_state.audio_to_play = None
 if "last_processed_audio" not in st.session_state:
     st.session_state.last_processed_audio = None
-# NEU: Schwierigkeitsgrad im Session State
 if "difficulty" not in st.session_state:
     st.session_state.difficulty = "🟡 Mittel"
 
@@ -140,10 +137,8 @@ else:
 # --- FUNKTIONEN FÜR KI & AUDIO ---
 def get_groq_response(system_prompt, user_text=None):
     messages = [{"role": "system", "content": system_prompt}]
-    
     for msg in st.session_state.history:
         messages.append({"role": msg["role"], "content": msg["content"]})
-        
     if user_text:
         messages.append({"role": "user", "content": user_text})
         
@@ -158,16 +153,29 @@ def get_groq_response(system_prompt, user_text=None):
     except Exception as e:
         return f"Lo siento, error de Groq: {str(e)}"
 
+# NEU: Der Anti-Freeze Timer für die Google Sprachausgabe!
 def text_to_speech(text):
-    try:
-        tts = gTTS(text, lang='es')
-        fp = io.BytesIO()
-        tts.write_to_fp(fp)
-        b64 = base64.b64encode(fp.getvalue()).decode()
-        st.session_state.audio_to_play = b64
-    except Exception as e:
-        st.error("Audio konnte nicht geladen werden. Bitte lies den Text der KI unten!")
+    st.session_state.temp_audio_b64 = None
+    
+    def fetch_audio():
+        try:
+            tts = gTTS(text, lang='es')
+            fp = io.BytesIO()
+            tts.write_to_fp(fp)
+            st.session_state.temp_audio_b64 = base64.b64encode(fp.getvalue()).decode()
+        except Exception:
+            pass
+
+    # Startet einen Timer im Hintergrund
+    t = threading.Thread(target=fetch_audio)
+    t.start()
+    t.join(timeout=4.0) # Wenn es länger als 4 Sekunden dauert, wird abgebrochen!
+
+    if t.is_alive():
+        st.warning("Google Audio-Server hängt! Sprachausgabe übersprungen, damit die App nicht einfriert. Lies den Text unten.")
         st.session_state.audio_to_play = None
+    else:
+        st.session_state.audio_to_play = st.session_state.temp_audio_b64
 
 def transcribe_audio_groq(audio_bytes):
     try:
@@ -183,32 +191,26 @@ def transcribe_audio_groq(audio_bytes):
 
 # --- DYNAMISCHER SYSTEM PROMPT ---
 def get_system_prompt(words_list, difficulty_level, is_start=False, start_word=None):
-    """Generiert den perfekten Prompt basierend auf der gewählten Schwierigkeit."""
     all_words_str = ", ".join(words_list)
-    
-    # Basis-Lockdown (gilt für ALLE Level)
     base_prompt = (
         f"ABSOLUTES VERBOT: Du bist ein Sprachpartner, aber du darfst AUSSCHLIESSLICH die folgenden Wörter benutzen: [{all_words_str}]. "
         f"Du darfst KEIN EINZIGES WORT verwenden, das nicht in dieser Liste steht. Keine Füllwörter, keine Artikel ('el', 'la', 'un'), keine Ausnahmen! "
         f"Es ist völlig egal, ob deine Grammatik dadurch falsch oder unnatürlich ist. Hauptsache, du nutzt nur diese Wörter! "
     )
     
-    # Schwierigkeits-Modifikator
     if difficulty_level == "🟢 Leicht":
         diff_prompt = "NIVEAU LEICHT: Verwende extrem kurze Sätze (maximal 3-5 Wörter). Stelle sehr simple, direkte Fragen, die leicht zu beantworten sind."
     elif difficulty_level == "🔴 Schwer":
         diff_prompt = "NIVEAU SCHWER: Verwende längere Sätze. Stelle komplexere, offenere Fragen, die den User zum Nachdenken zwingen."
-    else: # Mittel
+    else: 
         diff_prompt = "NIVEAU MITTEL: Verwende normale Sätze und stelle thematisch passende Fragen."
 
-    # Start- oder Laufend-Modifikator
     if is_start:
         action_prompt = f"STARTE DAS GESPRÄCH: Stelle mir sofort eine Frage. Du MUSST das Wort '{start_word}' in deiner Frage verwenden! Gib exakt EINEN kurzen Satz aus. Generiere keine Listen."
     else:
         action_prompt = "Reagiere kurz auf den User und stelle sofort eine neue Frage. Gib exakt EINEN Satz aus. Generiere keine Listen oder Erklärungen."
         
     return f"{base_prompt} {diff_prompt} {action_prompt}"
-
 
 # --- APP LAYOUT ---
 st.title("🇪🇸 Spanisch Video-Call")
@@ -217,11 +219,10 @@ st.title("🇪🇸 Spanisch Video-Call")
 if not st.session_state.call_started:
     st.write("### 📝 Vorbereitung")
     
-    # NEU: Schwierigkeitsgrad-Auswahl
     selected_difficulty = st.selectbox(
         "Wähle dein Sprachniveau:",
         ("🟢 Leicht", "🟡 Mittel", "🔴 Schwer"),
-        index=1 # Mittel ist Standard
+        index=1 
     )
     
     saved_vocab_data = load_saved_vocab()
@@ -258,7 +259,6 @@ if not st.session_state.call_started:
             if st.button("🔄 Laufenden Call fortsetzen", use_container_width=True):
                 st.session_state.history = saved_call["history"]
                 st.session_state.vocab_list = saved_call["vocab_list"]
-                # Schwierigkeit des gespeicherten Calls laden (falls vorhanden), sonst Standard
                 st.session_state.difficulty = saved_call.get("difficulty", "🟡 Mittel")
                 st.session_state.call_started = True
                 st.session_state.last_processed_audio = None
@@ -278,7 +278,7 @@ if not st.session_state.call_started:
                 if st.button(f"▶️ Dieses Gespräch fortsetzen", key=f"resume_{i}"):
                     st.session_state.history = past_chat['history'].copy()
                     st.session_state.vocab_list = past_chat['vocab_list'].copy()
-                    st.session_state.difficulty = "🟡 Mittel" # Bei ganz alten Chats Standard nehmen
+                    st.session_state.difficulty = "🟡 Mittel" 
                     st.session_state.call_started = True
                     st.session_state.last_processed_audio = None
                     save_active_call()
@@ -321,7 +321,6 @@ if st.session_state.call_started:
                     st.session_state.history.append({"role": "user", "content": user_text})
                     save_active_call() 
                     
-                    # Dynamischer System Prompt (Laufender Call)
                     sys_prompt = get_system_prompt(st.session_state.vocab_list, st.session_state.difficulty, is_start=False)
                     
                     ai_reply = get_groq_response(sys_prompt)
