@@ -561,7 +561,7 @@ if st.session_state.call_started:
         st.rerun()
 '''
 
-with open("/mnt/agents/output/spanisch_video_call_v3.py", "w", encoding="utf-8") as f:
+with open("/mnt/agents/output/app.py", "w", encoding="utf-8") as f:
     f.write(code)
 
-print("Datei gespeichert!")
+print("Saubere app.py gespeichert!")
