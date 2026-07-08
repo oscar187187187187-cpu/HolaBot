@@ -141,34 +141,28 @@ def evaluate_spanish_sentence(user_text):
     """Prüft den Satz des Users präzise auf Rechtschreibung, Grammatik und Sinn."""
     sys_prompt = (
         "Du bist ein extrem strenger und präziser Spanisch-Lehrer. Deine eigene Muttersprache ist ein makelloses, fehlerfreies Deutsch.\n"
+        "Da der Schüler eine Spracheingabe nutzt (Speech-to-Text), erkenne typische Hörfehler (z.B. 'Dzo' = 'Yo', 'Joe' = 'Yo', 'mecha' = 'mucha/mi').\n"
         "Bewerte den Spanisch-Satz des Schülers gnadenlos auf:\n"
-        "- Rechtschreibung & Akzente (z.B. estás statt estas, qué statt que)\n"
-        "- Grammatik & Konjugation (z.B. soy vs. estoy)\n"
-        "- Geschlecht & Artikel (el/la, un/una)\n"
-        "- Satzbau und Sinn\n\n"
-        "Regel 1: Wenn der Satz auch nur den allerkleinsten Rechtschreib-, Akzent- oder Grammatikfehler enthält, ist es ein 'Fehler'.\n"
-        "Regel 2: Wenn der Satz völlig sinnlos ist oder nur aus unzusammenhängenden Wörtern besteht, ist er 'Falsch'.\n"
-        "Regel 3: Dein deutsches Feedback MUSS orthografisch und grammatikalisch absolut perfekt formuliert sein.\n\n"
+        "- Ser vs. Estar (z.B. 'estoy en Alemania', NICHT 'soy en Alemania')\n"
+        "- Geschlecht & Artikel ('una tienda', 'mi amigo Oscar')\n"
+        "- Konjugationen und Rechtschreibung (Akzente).\n\n"
+        "Regel 1: Jeder noch so kleine Grammatik-, Wort- oder Akzentfehler ist ein 'Fehler'.\n"
+        "Regel 2: Wenn der Satz völlig sinnlos ist, ist er 'Falsch'.\n"
+        "Regel 3: Dein Feedback MUSS den komplett korrigierten Satz enthalten. Behaupte NIEMALS, etwas Falsches sei richtig!\n\n"
         "Antworte IMMER exakt im Format: STUFE | FEEDBACK\n\n"
-        "Beispiele für deine Strenge:\n"
-        "User: Hola como estas\n"
-        "Du: Fehler | Dir fehlen die Akzente und Satzzeichen. Richtig ist: 'Hola, ¿cómo estás?'.\n\n"
-        "User: Yo soy hambre\n"
-        "Du: Fehler | Man sagt auf Spanisch 'Tengo hambre' (Ich habe Hunger), nicht 'Soy hambre'.\n\n"
-        "User: El mesa es bonito\n"
-        "Du: Fehler | Tisch heißt 'la mesa' (weiblich) und das Adjektiv muss angepasst werden. Richtig: 'La mesa es bonita'.\n\n"
-        "User: Que tu hacer hoy\n"
-        "Du: Fehler | Das Verb ist falsch konjugiert und der Akzent fehlt. Richtig ist: '¿Qué haces tú hoy?'.\n\n"
-        "User: Hola, ¿cómo estás?\n"
-        "Du: Perfekt | Sehr gut! Der Satz ist grammatikalisch und orthografisch komplett richtig.\n\n"
-        "User: perro y gato el la\n"
-        "Du: Falsch | Das ist nur eine unzusammenhängende Ansammlung von Wörtern ohne Sinn.\n\n"
+        "Beispiele:\n"
+        "User: Dzo soy en Alemania\n"
+        "Du: Fehler | 'Dzo' war wohl 'Yo'. Für Orte benutzt man 'estar', nicht 'ser'. Richtig ist: 'Yo estoy en Alemania'.\n\n"
+        "User: Yo trabajo en un tienda\n"
+        "Du: Fehler | 'tienda' ist weiblich. Richtig ist: 'Yo trabajo en una tienda'.\n\n"
+        "User: Mi mecha amiga Oscar\n"
+        "Du: Falsch | Oscar ist männlich ('amigo'). Richtig wäre z.B.: 'Mi amigo Oscar'.\n\n"
         "JETZT BEWERTE DIESEN SATZ STRENG:"
     )
     try:
-        # Nutzung von llama-3.1-8b-instant mit Temperatur 0.0 für 100% pure Logik ohne Halluzinationen
+        # Wir nutzen das schlauste Modell (llama-3.3-70b-versatile) NUR für den Lehrer, damit die Grammatik 100% stimmt!
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_text}
@@ -178,7 +172,7 @@ def evaluate_spanish_sentence(user_text):
         )
         return completion.choices[0].message.content
     except Exception:
-        # Wenn Groq kurz hängt, schreiben wir keinen Fake-"Perfekt"-Satz mehr, sondern markieren es als System-Fehler!
+        # Wenn Groq kurz hängt, markieren wir es als System-Fehler!
         return "System | ⚠️ Groq ist gerade stark ausgelastet. Der Lehrer konnte diesen einen Satz nicht prüfen."
 
 def get_groq_response(system_prompt, user_text=None):
@@ -195,7 +189,7 @@ def get_groq_response(system_prompt, user_text=None):
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=messages,
-            temperature=0.1, 
+            temperature=0.3, # Erhöht auf 0.3, damit die KI nicht immer dieselbe Frage wiederholt!
             max_tokens=60
         )
         return completion.choices[0].message.content
@@ -232,23 +226,24 @@ def get_system_prompt(words_list, difficulty_level, is_start=False, start_word=N
     base_prompt = (
         f"ABSOLUTES VERBOT: Du bist ein Sprachpartner, aber du darfst AUSSCHLIESSLICH die folgenden Wörter benutzen: [{all_words_str}]. "
         f"Du darfst KEIN EINZIGES WORT verwenden, das nicht in dieser Liste steht. Keine Füllwörter, keine Artikel ('el', 'la', 'un'), keine Ausnahmen! "
-        f"Es ist völlig egal, ob deine Grammatik dadurch falsch oder unnatürlich ist. Hauptsache, du nutzt nur diese Wörter! "
+        f"Es ist völlig egal, ob deine Grammatik dadurch falsch oder unnatürlich ist. Hauptsache, du nutzt nur diese Wörter!\n\n"
+        f"ANTI-ECHO REGEL: Wiederhole NIEMALS einfach den vorherigen Satz! Du MUSST das Gespräch mit einer völlig neuen Frage vorantreiben.\n"
     )
     
     if difficulty_level == "🟢 Leicht":
-        diff_prompt = "NIVEAU LEICHT: Verwende extrem kurze Sätze (maximal 3-5 Wörter). Stelle sehr simple, direkte Fragen, die leicht zu beantworten sind."
+        diff_prompt = "NIVEAU LEICHT: Verwende extrem kurze Sätze (maximal 3-5 Wörter). Stelle sehr simple, direkte Fragen. Beende deine Antwort IMMER mit einem Fragezeichen (?)."
     elif difficulty_level == "🔴 Schwer":
-        diff_prompt = "NIVEAU SCHWER: Verwende längere Sätze. Stelle komplexere, offenere Fragen, die den User zum Nachdenken zwingen."
+        diff_prompt = "NIVEAU SCHWER: Verwende längere Sätze. Stelle komplexere, offenere Fragen, die den User zum Nachdenken zwingen. Beende deine Antwort IMMER mit einem Fragezeichen (?)."
     else: 
-        diff_prompt = "NIVEAU MITTEL: Verwende normale Sätze und stelle thematisch passende Fragen."
+        diff_prompt = "NIVEAU MITTEL: Verwende normale Sätze. Deine Antwort MUSS zwingend eine NEUE thematisch passende Frage enthalten und mit einem Fragezeichen (?) enden."
 
     if is_start:
-        action_prompt = f"STARTE DAS GESPRÄCH: Stelle mir sofort eine Frage. Du MUSST das Wort '{start_word}' in deiner Frage verwenden! Gib exakt EINEN kurzen Satz aus. Generiere keine Listen."
+        action_prompt = f"\nSTARTE DAS GESPRÄCH: Stelle mir sofort eine Frage. Du MUSST das Wort '{start_word}' in deiner Frage verwenden! Gib exakt EINEN kurzen Satz aus. Generiere keine Listen."
     else:
-        action_prompt = "Reagiere kurz auf den User und stelle sofort eine neue Frage. Gib exakt EINEN Satz aus. Generiere keine Listen oder Erklärungen."
+        action_prompt = "\nReagiere kurz auf den User und stelle sofort eine NEUE Frage, die du noch NICHT gestellt hast. Gib exakt EINEN Satz aus. Generiere keine Listen oder Erklärungen."
         
     return f"{base_prompt} {diff_prompt} {action_prompt}"
-
+    
 # --- APP LAYOUT ---
 st.title("🇪🇸 Spanisch Video-Call")
 diff_options = ["🟢 Leicht", "🟡 Mittel", "🔴 Schwer"]
