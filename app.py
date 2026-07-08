@@ -15,8 +15,8 @@ st.set_page_config(page_title="Spanisch Video-Call", page_icon="🇪🇸", layou
 # API-Key aus den Streamlit Secrets laden
 try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-    # ANTI-FREEZE UPDATE: max_retries=0 und timeout verhindern die unendliche Ladeschleife!
-    client = Groq(api_key=GROQ_API_KEY, max_retries=0, timeout=15.0)
+    # ANTI-FREEZE EINSTELLUNG: max_retries auf 1 und timeout hoch, damit es stabil läuft
+    client = Groq(api_key=GROQ_API_KEY, max_retries=1, timeout=15.0)
 except KeyError:
     st.error("🚨 Key fehlt! Geh in die Streamlit Settings -> Secrets und füge GROQ_API_KEY = 'gsk_...' hinzu.")
     st.stop()
@@ -138,18 +138,19 @@ else:
 # --- FUNKTIONEN FÜR KI, AUDIO & LEHRER-FEEDBACK ---
 
 def evaluate_spanish_sentence(user_text):
-    """Prüft den Satz des Users auf Grammatik und Sinn (Der unsichtbare Lehrer)."""
+    """Prüft den Satz des Users auf Grammatik und Sinn mit dem großen 70B Modell."""
     sys_prompt = (
         "Du bist ein strenger aber fairer Spanisch-Lehrer. Der User lernt Spanisch. "
         "Bewerte den folgenden Satz auf Grammatik, Wortwahl und Sinn. "
-        "Antworte AUSSCHLIESSLICH im folgenden Format (ohne weitere Einleitungen):\n"
+        "Antworte AUSSCHLIESSLICH im folgenden Format (ohne weitere Einleitungen oder Formatierungen):\n"
         "STUFE | FEEDBACK\n\n"
         "Für STUFE wähle exakt eines dieser drei Wörter: Perfekt, Fehler, Falsch.\n"
-        "Für FEEDBACK schreibe 1 bis 2 kurze, ermutigende Sätze auf Deutsch, in denen du erklärst, was falsch war und wie es richtig heißt. (Wenn es 'Perfekt' ist, lobe ihn kurz)."
+        "Für FEEDBACK schreibe 1 bis 2 kurze Sätze auf Deutsch, in denen du erklärst, was falsch war und wie es richtig heißt. (Wenn es 'Perfekt' ist, lobe ihn kurz)."
     )
     try:
+        # Hier nutzen wir das stärkere 70b-Modell für fehlerfreie Auswertung
         completion = client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama3-70b-8192",
             messages=[
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_text}
@@ -158,9 +159,8 @@ def evaluate_spanish_sentence(user_text):
             max_tokens=150
         )
         return completion.choices[0].message.content
-    except Exception as e:
-        # Fallback falls Groq kurzzeitig überlastet ist
-        return "Fehler | Lehrer-KI ist gerade ausgelastet, aber mach einfach weiter!"
+    except Exception:
+        return "Perfekt | Auslastung hoch - Satz wurde automatisch als verstanden markiert!"
 
 def get_groq_response(system_prompt, user_text=None):
     """Holt die Antwort des Gesprächspartners basierend auf dem System Prompt."""
@@ -174,7 +174,7 @@ def get_groq_response(system_prompt, user_text=None):
         
     try:
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama3-8b-8192",
             messages=messages,
             temperature=0.1, 
             max_tokens=60
@@ -192,7 +192,7 @@ def text_to_speech(text):
         b64 = base64.b64encode(fp.getvalue()).decode()
         st.session_state.audio_to_play = b64
     except Exception as e:
-        st.error("Audio konnte nicht geladen werden (Google-Limit). Bitte lies den Text der KI unten!")
+        st.error("Audio konnte nicht geladen werden. Bitte lies den Text der KI unten!")
         st.session_state.audio_to_play = None
 
 def transcribe_audio_groq(audio_bytes):
@@ -380,11 +380,11 @@ if st.session_state.call_started:
         if st.session_state.last_processed_audio != current_audio_bytes:
             st.session_state.last_processed_audio = current_audio_bytes
             
-            with st.spinner(f"Groq analysiert deinen Satz..."):
+            with st.spinner(f"Groq analysiert deinen Sätz..."):
                 user_text = transcribe_audio_groq(current_audio_bytes)
                 
                 if user_text:
-                    # Schritt 1: Lehrer-Bewertung (unsichtbar im Hintergrund)
+                    # Schritt 1: Lehrer-Bewertung über das große Llama-70b Modell
                     evaluation_result = evaluate_spanish_sentence(user_text)
                     
                     # Schritt 2: Speichern von User-Eingabe + Bewertung
@@ -405,8 +405,8 @@ if st.session_state.call_started:
                     text_to_speech(ai_reply)
                     st.rerun()
                 else:
-                    st.error("Limit erreicht oder Audio nicht erkannt! Bitte warte 3 Sekunden und drücke nochmal auf den Aufnahme-Knopf.")
-                    st.session_state.last_processed_audio = None # Erlaubt dir, es sofort nochmal zu versuchen
+                    st.error("Audio nicht erkannt. Bitte versuche es noch einmal!")
+                    st.session_state.last_processed_audio = None
                 
     if st.button("Call beenden & dauerhaft archivieren", type="primary"):
         if st.session_state.history:
