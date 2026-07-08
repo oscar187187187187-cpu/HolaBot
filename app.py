@@ -38,14 +38,14 @@ def update_streak():
     data = load_streak()
     today = datetime.now().date().isoformat()
     yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
-    
+
     if data["last_date"] == today:
         return data["streak"] 
     elif data["last_date"] == yesterday:
         data["streak"] += 1   
     else:
         data["streak"] = 1    
-        
+
     data["last_date"] = today
     save_streak(data)
     return data["streak"]
@@ -141,7 +141,6 @@ else:
 
 # --- ANTI-ECHO HILFSFUNKTIONEN ---
 def is_echo(user_text, ai_text):
-    """Prüft ob die KI den User einfach wiederholt."""
     if not user_text or not ai_text:
         return False
     user_clean = re.sub(r'[^\w\s]', '', user_text.lower()).strip()
@@ -156,7 +155,6 @@ def is_echo(user_text, ai_text):
     return (matches / len(user_words)) > 0.5
 
 def generate_fallback_question(words_list, difficulty_level, used_questions):
-    """Generiert eine Fallback-Frage wenn die KI echoing macht."""
     templates_easy = [
         "¿Qué te gusta?",
         "¿Dónde estás?",
@@ -179,14 +177,14 @@ def generate_fallback_question(words_list, difficulty_level, used_questions):
         "¿Dónde prefieres buscar {word} y por qué?",
         "¿Qué harías si no tuvieras {word}?"
     ]
-    
+
     if difficulty_level == "🟢 Leicht":
         templates = templates_easy
     elif difficulty_level == "🔴 Schwer":
         templates = templates_hard
     else:
         templates = templates_medium
-    
+
     for _ in range(10):
         template = random.choice(templates)
         word = random.choice(words_list)
@@ -198,115 +196,115 @@ def generate_fallback_question(words_list, difficulty_level, used_questions):
 # --- ZENTRALE KI & AUDIO FUNKTIONEN ---
 
 def get_integrated_response(user_text, words_list, difficulty_level, is_start=False, start_word=None, used_questions=None):
-    """
-    Kombiniert Lehrer-Feedback und Gesprächsantwort in einem JSON-API-Call.
-    """
     if used_questions is None:
         used_questions = []
-    
+
     all_words_str = ", ".join(words_list)
     used_questions_str = " | ".join(used_questions[-8:]) if used_questions else "Noch keine"
-    
+
+    # NEU: Viel strengerer Prompt für Grammatikprüfung
     base_prompt = (
-        "Du bist ein spanischer Sprachpartner für einen Deutschsprachigen. "
-        "Du führst ein GESPRÄCH auf Spanisch. "
+        "Du bist ein STRENGER spanischer Sprach-Lehrer für einen Deutschsprachigen. "
+        "Du bewertest JEDEN Satz penibel genau auf Grammatik, Wortwahl und Satzbau. "
         "WICHTIG: Antworte NUR im JSON-Format!\n\n"
         f"ERLAUBTE WÖRTER (nur diese verwenden): [{all_words_str}]\n"
-        "Keine anderen Wörter! Keine Artikel, Konjunktionen oder Präpositionen die nicht in der Liste stehen!\n\n"
-        "=== ABSOLUTE REGELN ===\n"
-        "1. ECHO-VERBOT: Wiederhole NIEMALS den Satz des Users. "
-        "Reagiere NIEMALS mit 'A mí también...' oder 'Yo también...' auf das, was der User gesagt hat. "
-        "Stelle stattdessen eine NEUE, UNBEKANNTE Frage.\n"
-        "2. FRAGEN-VERBOT: Beantworte deine Frage NICHT selbst. "
-        "Du darfst nur FRAGEN stellen, keine Aussagen über dich machen.\n"
-        "3. NEUHEIT: Stelle eine Frage die NOCH NICHT in diesem Gespräch gestellt wurde.\n"
-        "4. FRAGEZEICHEN: Jede spanische Antwort MUSS mit ? enden.\n"
+        "Keine anderen Wörter!\n\n"
+        "=== BEWERTUNGS-REGELN (STRENG!) ===\n"
+        "'Perfekt': NUR wenn der Satz zu 100% grammatikalisch korrekt ist, alle Wörter richtig konjugiert sind, "
+        "und die Satzstellung perfekt ist. Selbst kleinste Fehler (fehlende Akzente, falsche Artikel, falsche Konjugation) "
+        "machen den Satz NICHT perfekt.\n\n"
+        "'Leichter Fehler': Der Satz ist verständlich, aber enthält 1-3 kleine Fehler wie: "
+        "fehlende Akzente, falsche Artikel, falsche Endungen, kleine Wortfehler. "
+        "Beispiel: 'Me gusta la clase' statt 'Me gusta el clase' = Leichter Fehler.\n\n"
+        "'Falsch': Der Satz enthält 4+ Fehler, ist unverständlich, oder verwendet Wörter die nicht in der Liste stehen. "
+        "ODER: Der Satz wiederholt sich, ist unvollständig, oder macht keinen Sinn.\n\n"
+        "=== ANTI-ECHO REGELN ===\n"
+        "1. Wiederhole NIEMALS den Satz des Users. "
+        "Stelle eine NEUE, UNBEKANNTE Frage.\n"
+        "2. Beantworte deine Frage NICHT selbst. Nur FRAGEN stellen.\n"
+        "3. Stelle eine Frage die NOCH NICHT gestellt wurde.\n"
+        "4. Jede Antwort MUSS mit ? enden.\n"
     )
-    
+
     if difficulty_level == "🟢 Leicht":
         diff_prompt = (
-            "\nNIVEAU LEICHT: Sehr kurze Fragen (3-5 Wörter). Einfache Ja/Nein-Fragen oder "
-            "'Was...?' / 'Wie...?' Fragen. Nutze nur die einfachsten erlaubten Wörter."
+            "\nNIVEAU LEICHT: Sehr kurze Fragen (3-5 Wörter). Einfache Ja/Nein-Fragen."
         )
     elif difficulty_level == "🔴 Schwer":
         diff_prompt = (
-            "\nNIVEAU SCHWER: Längere Fragen (6-10 Wörter). Offene Fragen die zum Nachdenken anregen. "
-            "Verwende verschiedene Fragewörter. Die Frage MUSS mit ? enden."
+            "\nNIVEAU SCHWER: Längere Fragen (6-10 Wörter). Offene Fragen."
         )
     else: 
         diff_prompt = (
-            "\nNIVEAU MITTEL: Normale Fragen (4-7 Wörter). Stelle eine neue, thematisch passende Frage. "
-            "Die Frage MUSS mit ? enden."
+            "\nNIVEAU MITTEL: Normale Fragen (4-7 Wörter)."
         )
 
     if is_start:
         action_prompt = f"\n\nSTARTE das Gespräch mit einer Frage. Du MUSST das Wort '{start_word}' verwenden!"
     else:
         action_prompt = (
-            "\n\nAUFGABE 1: Bewerte den Satz des Users. Wähle: 'Perfekt' (alles richtig), "
-            "'Leichter Fehler' (verständlich, kleine Fehler), oder 'Falsch' (ergibt keinen Sinn). "
-            "Gib 1-2 Sätze Feedback auf Deutsch.\n"
+            "\n\nAUFGABE 1: BEWERTE STRENG. Zähle konkret die Fehler auf. "
+            "Wenn der User 'me gosta' statt 'me gusta' sagt, ist das 'Leichter Fehler' (falsche Konjugation). "
+            "Wenn der User den Satz zweimal wiederholt oder 4+ Fehler macht, ist das 'Falsch'. "
+            "Wenn der Satz grammatikalisch korrekt ist aber nur ein Wort falsch geschrieben, ist das 'Leichter Fehler'. "
+            "NUR bei 0 Fehlern: 'Perfekt'.\n\n"
             "AUFGABE 2: Stelle eine NEUE Frage auf Spanisch. "
-            "Die Frage darf NICHT eine Variation der vorherigen Fragen sein.\n"
-            f"BEREITS GESTELLTE FRAGEN (diese NICHT wiederholen): {used_questions_str}"
+            f"BEREITS GESTELLTE FRAGEN: {used_questions_str}"
         )
 
     examples = (
-        "\n\n=== BEISPIELE ===\n"
-        "User: 'Me gusta el agua.'\n"
-        "SCHLECHT: 'A mí también me gusta el agua. ¿Y a ti?' (ECHO! Wiederholt das Thema!)\n"
-        "GUT: '¿Dónde bebes el agua?' (Neue Frage, neues Thema!)\n\n"
-        "User: 'Hola, ¿cómo estás?'\n"
-        "SCHLECHT: 'Hola, estoy bien. ¿Y tú?' (ECHO! Wiederholt Begrüßung!)\n"
-        "GUT: '¿Te gusta el café?' (Komplett neue Frage!)\n\n"
-        "User: 'Estoy bien, gracias.'\n"
-        "SCHLECHT: 'Me alegro. ¿Qué haces?' (Zu ähnlich!)\n"
-        "GUT: '¿Dónde vives?' (Neue Richtung!)"
+        "\n\n=== BEISPIELE FÜR BEWERTUNG ===\n"
+        "User: 'Me gusta la clase de matemáticas.' (angenommen 'matemáticas' ist NICHT in der Wortliste)\n"
+        "→ Stufe: 'Falsch' | Feedback: 'Du hast ein Wort verwendet das nicht erlaubt ist. Bleibe bei den Vokabeln.'\n\n"
+        "User: 'Me gusta el clase.' (falscher Artikel: 'el' statt 'la')\n"
+        "→ Stufe: 'Leichter Fehler' | Feedback: 'Fast richtig! Es heißt la clase, nicht el clase.'\n\n"
+        "User: 'Me gusta la clase.' (alles richtig)\n"
+        "→ Stufe: 'Perfekt' | Feedback: 'Sehr gut! Alles korrekt.'\n\n"
+        "User: 'Me gusta me gusta la clase.' (Wiederholung)\n"
+        "→ Stufe: 'Falsch' | Feedback: 'Du hast den Satz wiederholt. Versuche einen vollständigen Satz zu bilden.'"
     )
-    
+
     json_instruction = (
         "\n\n=== JSON FORMAT ===\n"
         "{\n"
         '  "stufe": "Perfekt" oder "Leichter Fehler" oder "Falsch",\n'
-        '  "feedback": "Deutsches Feedback (1-2 Sätze). Was war falsch und wie richtig? Oder Lob.",\n'
-        '  "antwort": "NUR eine neue spanische FRAGE. Nur erlaubte Wörter. Muss mit ? enden. KEINE Aussagen!"\n'
+        '  "feedback": "Konkretes Feedback auf Deutsch. Nenne den EXAKTEN Fehler und die korrekte Version.",\n'
+        '  "antwort": "NUR eine neue spanische FRAGE. Mit ? enden."\n'
         "}"
     )
-    
+
     system_prompt = base_prompt + diff_prompt + action_prompt + examples + json_instruction
 
     messages = [{"role": "system", "content": system_prompt}]
-    
+
     for msg in st.session_state.history[-3:]:
         if "content" in msg and msg["role"] in ["user", "assistant"]:
             messages.append({"role": msg["role"], "content": msg["content"]})
-            
+
     if user_text:
         messages.append({"role": "user", "content": user_text})
-        
+
     try:
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=messages,
-            temperature=0.4,
-            max_tokens=200,
+            temperature=0.3,
+            max_tokens=250,
             response_format={"type": "json_object"}
         )
         response_data = json.loads(completion.choices[0].message.content)
-        
+
         ai_antwort = response_data.get("antwort", "¿Perdón?")
-        
-        # Anti-Echo Check
+
         if not is_start and is_echo(user_text, ai_antwort):
             response_data["antwort"] = generate_fallback_question(words_list, difficulty_level, used_questions)
             response_data["feedback"] += " (Die KI wollte echoen, Fallback-Frage wurde genutzt.)"
-        
-        # Sicherstellen dass es mit ? endet
+
         if not response_data.get("antwort", "").strip().endswith("?"):
             response_data["antwort"] = response_data.get("antwort", "¿Perdón?").strip() + "?"
-            
+
         return response_data
-        
+
     except Exception as e:
         return {
             "stufe": "Fehler",
@@ -315,7 +313,6 @@ def get_integrated_response(user_text, words_list, difficulty_level, is_start=Fa
         }
 
 def text_to_speech(text):
-    """Wandelt Text in Audio um."""
     try:
         tts = gTTS(text, lang='es')
         fp = io.BytesIO()
@@ -326,7 +323,6 @@ def text_to_speech(text):
         st.session_state.audio_to_play = None
 
 def transcribe_audio_groq(audio_bytes):
-    """Wandelt Audio über Whisper in Text um."""
     try:
         transcription = client.audio.transcriptions.create(
             file=("audio.wav", audio_bytes),
@@ -339,7 +335,6 @@ def transcribe_audio_groq(audio_bytes):
 
 # --- UI HILFSFUNKTION FÜR FEEDBACK ---
 def render_feedback(eval_text):
-    """Wertet den Feedback-String aus und zeigt die richtige Box (Grün/Gelb/Rot) an."""
     try:
         stufe, feedback = eval_text.split("|", 1)
         if "Perfekt" in stufe:
@@ -351,12 +346,16 @@ def render_feedback(eval_text):
     except:
         st.info(f"👨‍🏫 **Feedback:** {eval_text}")
 
-# --- BROWSER-SICHERES AUDIO WIDGET ---
-def play_audio_widget(audio_b64, text_display):
-    """Zeigt einen Audio-Player mit Fallback an."""
+# --- AUTOPLAY AUDIO (nach User-Interaktion erlaubt) ---
+def autoplay_audio(audio_b64):
+    """Spielt Audio automatisch ab nachdem User interagiert hat (Mikrofon-Button)."""
     if audio_b64:
-        st.audio(f"data:audio/mp3;base64,{audio_b64}", format="audio/mp3")
-    st.markdown(f"**🤖 KI sagt:** *{text_display}*")
+        audio_html = f"""
+        <audio autoplay="autoplay">
+            <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
+        </audio>
+        """
+        st.markdown(audio_html, unsafe_allow_html=True)
 
 # --- APP LAYOUT ---
 st.title("🇪🇸 Spanisch Video-Call")
@@ -365,7 +364,7 @@ diff_options = ["🟢 Leicht", "🟡 Mittel", "🔴 Schwer"]
 # 1. SETUP-BILDSCHIRM
 if not st.session_state.call_started:
     st.write("### 📝 Vorbereitung")
-    
+
     current_index = diff_options.index(st.session_state.difficulty) if st.session_state.difficulty in diff_options else 1
     selected_difficulty = st.selectbox(
         "Wähle dein Sprachniveau:",
@@ -373,16 +372,16 @@ if not st.session_state.call_started:
         index=current_index
     )
     st.session_state.difficulty = selected_difficulty
-    
+
     saved_vocab_data = load_saved_vocab()
     vocab_input = st.text_area("Deine Vokabeln (kommagetrennt oder mit Leerzeichen):", value=saved_vocab_data, height=150)
-    
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
         if st.button("📞 Neuer Video-Call", use_container_width=True, type="primary"):
             words = [w.strip().lower() for w in re.split(r'[,\s\n]+', vocab_input) if w.strip()]
-            
+
             if len(words) < 2:
                 st.warning("Bitte füge deine Wörter ein.")
             else:
@@ -392,16 +391,16 @@ if not st.session_state.call_started:
                 st.session_state.used_questions = []
                 st.session_state.processing = False
                 save_vocab(vocab_input) 
-                
+
                 random_start_word = random.choice(words)
-                
+
                 with st.spinner(f"Verbindung wird aufgebaut ({st.session_state.difficulty})..."):
                     response_data = get_integrated_response(
                         "Start", words, st.session_state.difficulty, 
                         is_start=True, start_word=random_start_word
                     )
                     ai_reply = response_data.get("antwort", "¿Hola, qué tal?")
-                    
+
                     st.session_state.history.append({"role": "assistant", "content": ai_reply})
                     st.session_state.used_questions.append(ai_reply)
                     text_to_speech(ai_reply)
@@ -435,7 +434,7 @@ if not st.session_state.call_started:
                             render_feedback(msg["evaluation"])
                     else:
                         st.markdown(f"**🤖 Groq KI:** {msg['content']}")
-                
+
                 if st.button(f"▶️ Dieses Gespräch fortsetzen", key=f"resume_{i}"):
                     st.session_state.history = past_chat['history'].copy()
                     st.session_state.vocab_list = past_chat['vocab_list'].copy()
@@ -456,15 +455,16 @@ if st.session_state.call_started:
             <small style="color: #888;">Du kannst das Fenster jederzeit schließen. Der Chat wird automatisch gespeichert!</small>
         </div>
     """, unsafe_allow_html=True)
-    
-    # Audio anzeigen (Browser-kompatibel mit Play-Button)
+
+    # AUTOPLAY: Audio spielt automatisch nach User-Interaktion
     if st.session_state.audio_to_play:
-        play_audio_widget(st.session_state.audio_to_play, st.session_state.history[-1]["content"] if st.session_state.history else "")
+        autoplay_audio(st.session_state.audio_to_play)
         st.session_state.audio_to_play = None
-    elif st.session_state.history and st.session_state.history[-1]["role"] == "assistant":
-        # Wenn kein Audio da ist aber eine KI-Antwort existiert, Text anzeigen
+
+    # Zeige die letzte KI-Antwort als Text an
+    if st.session_state.history and st.session_state.history[-1]["role"] == "assistant":
         st.markdown(f"**🤖 KI sagt:** *{st.session_state.history[-1]['content']}*")
-        
+
     with st.expander("📝 Transkript & Lehrer-Feedback anzeigen", expanded=True):
         for msg in st.session_state.history:
             if msg["role"] == "user":
@@ -473,9 +473,9 @@ if st.session_state.call_started:
                     render_feedback(msg["evaluation"])
             else:
                 st.markdown(f"**🤖 Groq KI:** {msg['content']}")
-            
+
     st.write("---")
-    
+
     col_text, col_diff = st.columns([2, 1])
     with col_text:
         st.write("### 🎙️ Du bist dran")
@@ -493,47 +493,44 @@ if st.session_state.call_started:
             save_active_call()
             st.rerun()
 
-    # Audio Input - nur wenn nicht gerade verarbeitet wird
     if not st.session_state.processing:
         audio_value = st.audio_input("Halte den Knopf zum Sprechen:")
-        
+
         if audio_value:
             current_audio_bytes = audio_value.getvalue()
-            
+
             if st.session_state.last_processed_audio != current_audio_bytes:
                 st.session_state.last_processed_audio = current_audio_bytes
                 st.session_state.processing = True
-                st.rerun()  # Nur ein rerun um in den processing-Modus zu kommen
+                st.rerun()
     else:
-        # Wir sind im Processing-Modus
         st.info("⏳ Groq analysiert deinen Satz...")
-        
-        # Hole das letzte Audio aus dem State
+
         if st.session_state.last_processed_audio:
             user_text = transcribe_audio_groq(st.session_state.last_processed_audio)
-            
+
             if user_text:
                 response_data = get_integrated_response(
                     user_text, st.session_state.vocab_list, 
                     st.session_state.difficulty, is_start=False,
                     used_questions=st.session_state.used_questions
                 )
-                
+
                 stufe_aus_json = response_data.get("stufe", "Falsch")
                 feedback_aus_json = response_data.get("feedback", "Kein Feedback erhalten.")
                 ai_reply = response_data.get("antwort", "¿Perdón?")
-                
+
                 eval_string_fuer_ui = f"{stufe_aus_json} | {feedback_aus_json}"
-                
+
                 st.session_state.history.append({
                     "role": "user", 
                     "content": user_text,
                     "evaluation": eval_string_fuer_ui
                 })
-                
+
                 st.session_state.history.append({"role": "assistant", "content": ai_reply})
                 st.session_state.used_questions.append(ai_reply)
-                
+
                 text_to_speech(ai_reply)
                 st.session_state.processing = False
                 save_active_call()
@@ -545,11 +542,11 @@ if st.session_state.call_started:
                 st.rerun()
         else:
             st.session_state.processing = False
-                
+
     if st.button("Call beenden & dauerhaft archivieren", type="primary"):
         if st.session_state.history:
             save_completed_call(st.session_state.history, st.session_state.vocab_list, st.session_state.difficulty)
-        
+
         update_streak()
         delete_active_call() 
         st.session_state.call_started = False
