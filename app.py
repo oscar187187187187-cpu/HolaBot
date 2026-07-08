@@ -15,7 +15,7 @@ st.set_page_config(page_title="Spanisch Video-Call", page_icon="🇪🇸", layou
 # API-Key aus den Streamlit Secrets laden
 try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-    # ANTI-FREEZE EINSTELLUNG: Verhindert die Ladeschleife
+    # ANTI-FREEZE EINSTELLUNG: max_retries auf 1 und timeout hoch, damit es stabil läuft
     client = Groq(api_key=GROQ_API_KEY, max_retries=1, timeout=15.0)
 except KeyError:
     st.error("🚨 Key fehlt! Geh in die Streamlit Settings -> Secrets und füge GROQ_API_KEY = 'gsk_...' hinzu.")
@@ -135,53 +135,59 @@ if streak_info['last_date'] == datetime.now().date().isoformat():
 else:
     st.sidebar.warning("⚡ Heute noch nicht gelernt!")
 
-# --- ZENTRALE KI & AUDIO FUNKTIONEN ---
+# --- FUNKTIONEN FÜR KI, AUDIO & LEHRER-FEEDBACK ---
 
-def get_integrated_response(user_text, words_list, difficulty_level, is_start=False, start_word=None):
-    """
-    Kombiniert Lehrer-Feedback und Gesprächsantwort in einem JSON-API-Call.
-    Inklusive Anti-Echo-Regel und klarem 3-Stufen Feedback!
-    """
-    all_words_str = ", ".join(words_list)
-    
-    base_prompt = (
-        "Du bist ein spanischer Sprachpartner UND ein strenger Spanisch-Lehrer. "
-        "WICHTIG: Du musst zwingend im JSON-Format antworten!\n\n"
-        f"ABSOLUTES VERBOT: Du darfst für deine spanische Antwort AUSSCHLIESSLICH die folgenden Wörter benutzen: [{all_words_str}]. "
-        "Keine Ausnahmen, keine Füllwörter, keine Artikel die nicht in der Liste stehen!\n\n"
-        "ANTI-ECHO REGEL: Wiederhole NIEMALS einfach den Satz des Users. Du musst das Gespräch am Leben halten!\n"
+def evaluate_spanish_sentence(user_text):
+    """Prüft den Satz des Users präzise auf Rechtschreibung, Grammatik und Sinn."""
+    sys_prompt = (
+        "Du bist ein extrem strenger und präziser Spanisch-Lehrer. Deine eigene Muttersprache ist ein makelloses, fehlerfreies Deutsch.\n"
+        "Bewerte den Spanisch-Satz des Schülers gnadenlos auf:\n"
+        "- Rechtschreibung & Akzente (z.B. estás statt estas, qué statt que)\n"
+        "- Grammatik & Konjugation (z.B. soy vs. estoy)\n"
+        "- Geschlecht & Artikel (el/la, un/una)\n"
+        "- Satzbau und Sinn\n\n"
+        "Regel 1: Wenn der Satz auch nur den allerkleinsten Rechtschreib-, Akzent- oder Grammatikfehler enthält, ist es ein 'Fehler'.\n"
+        "Regel 2: Wenn der Satz völlig sinnlos ist oder nur aus unzusammenhängenden Wörtern besteht, ist er 'Falsch'.\n"
+        "Regel 3: Dein deutsches Feedback MUSS orthografisch und grammatikalisch absolut perfekt formuliert sein.\n\n"
+        "Antworte IMMER exakt im Format: STUFE | FEEDBACK\n\n"
+        "Beispiele für deine Strenge:\n"
+        "User: Hola como estas\n"
+        "Du: Fehler | Dir fehlen die Akzente und Satzzeichen. Richtig ist: 'Hola, ¿cómo estás?'.\n\n"
+        "User: Yo soy hambre\n"
+        "Du: Fehler | Man sagt auf Spanisch 'Tengo hambre' (Ich habe Hunger), nicht 'Soy hambre'.\n\n"
+        "User: El mesa es bonito\n"
+        "Du: Fehler | Tisch heißt 'la mesa' (weiblich) und das Adjektiv muss angepasst werden. Richtig: 'La mesa es bonita'.\n\n"
+        "User: Que tu hacer hoy\n"
+        "Du: Fehler | Das Verb ist falsch konjugiert und der Akzent fehlt. Richtig ist: '¿Qué haces tú hoy?'.\n\n"
+        "User: Hola, ¿cómo estás?\n"
+        "Du: Perfekt | Sehr gut! Der Satz ist grammatikalisch und orthografisch komplett richtig.\n\n"
+        "User: perro y gato el la\n"
+        "Du: Falsch | Das ist nur eine unzusammenhängende Ansammlung von Wörtern ohne Sinn.\n\n"
+        "JETZT BEWERTE DIESEN SATZ STRENG:"
     )
-    
-    if difficulty_level == "🟢 Leicht":
-        diff_prompt = "NIVEAU LEICHT: Verwende extrem kurze spanische Sätze (3-5 Wörter). Stelle sehr simple, direkte Fragen. Deine Antwort MUSS mit einem Fragezeichen (?) enden."
-    elif difficulty_level == "🔴 Schwer":
-        diff_prompt = "NIVEAU SCHWER: Verwende längere spanische Sätze. Stelle komplexere, offenere Fragen, die den User zum Nachdenken zwingen. Deine Antwort MUSS mit einem Fragezeichen (?) enden."
-    else: 
-        diff_prompt = "NIVEAU MITTEL: Verwende normale spanische Sätze. Deine Antwort MUSS zwingend eine NEUE thematisch passende Frage enthalten und mit einem Fragezeichen (?) enden."
+    try:
+        # Nutzung von llama-3.1-8b-instant mit Temperatur 0.0 für 100% pure Logik ohne Halluzinationen
+        completion = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_text}
+            ],
+            temperature=0.0,
+            max_tokens=150
+        )
+        return completion.choices[0].message.content
+    except Exception:
+        # Wenn Groq kurz hängt, schreiben wir keinen Fake-"Perfekt"-Satz mehr, sondern markieren es als System-Fehler!
+        return "System | ⚠️ Groq ist gerade stark ausgelastet. Der Lehrer konnte diesen einen Satz nicht prüfen."
 
-    if is_start:
-        action_prompt = f"\n\nSTARTE DAS GESPRÄCH: Stelle mir sofort eine spanische Frage. Du MUSST das Wort '{start_word}' verwenden!"
-    else:
-        action_prompt = "\n\nAufgabe 1: Bewerte meinen Satz präzise. Aufgabe 2: Reagiere kurz auf Spanisch und stelle zwingend eine NEUE Frage."
-
-    json_instruction = (
-        "\n\nGib deine Antwort AUSSCHLIESSLICH als gültiges JSON-Objekt mit genau diesen drei Schlüsseln zurück:\n"
-        "{\n"
-        "  \"stufe\": \"Wähle exakt zwischen: 'Perfekt' (alles richtig), 'Leichter Fehler' (verständlich, aber Grammatik/Wortwahl leicht falsch), oder 'Falsch' (ergibt keinen Sinn)\",\n"
-        "  \"feedback\": \"1 bis 2 kurze Sätze auf Deutsch, was falsch war und wie es richtig heißt (oder ein kurzes Lob).\",\n"
-        "  \"antwort\": \"Deine spanische Antwort UND eine neue Frage (nur aus den erlaubten Wörtern!)\"\n"
-        "}"
-    )
-    
-    system_prompt = base_prompt + diff_prompt + action_prompt + json_instruction
-
+def get_groq_response(system_prompt, user_text=None):
+    """Holt die Antwort des Gesprächspartners basierend auf dem System Prompt und llama-3.1-8b-instant."""
     messages = [{"role": "system", "content": system_prompt}]
     
-    # Kontext für die KI (nur die letzten paar Nachrichten für max. Geschwindigkeit)
-    for msg in st.session_state.history[-4:]:
-        if "content" in msg and msg["role"] in ["user", "assistant"]:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-            
+    for msg in st.session_state.history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+        
     if user_text:
         messages.append({"role": "user", "content": user_text})
         
@@ -189,18 +195,12 @@ def get_integrated_response(user_text, words_list, difficulty_level, is_start=Fa
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=messages,
-            temperature=0.2, # Leicht erhöht von 0.1 auf 0.2, damit sie kreativer bei den Fragen wird und nicht im Loop hängen bleibt
-            max_tokens=250,
-            response_format={"type": "json_object"}
+            temperature=0.1, 
+            max_tokens=60
         )
-        response_data = json.loads(completion.choices[0].message.content)
-        return response_data
+        return completion.choices[0].message.content
     except Exception as e:
-        return {
-            "stufe": "Fehler",
-            "feedback": "Verbindungsproblem mit Groq. Bitte sprich deinen Satz noch einmal!",
-            "antwort": "Lo siento, error de conexión."
-        }
+        return "Lo siento, error de conexión. Bitte sprich deinen Satz noch einmal!"
 
 def text_to_speech(text):
     """Wandelt Text in Audio um mit Anti-Freeze Schutz."""
@@ -226,19 +226,28 @@ def transcribe_audio_groq(audio_bytes):
     except Exception as e:
         return None
 
-# --- UI HILFSFUNKTION FÜR FEEDBACK ---
-def render_feedback(eval_text):
-    """Wertet den Feedback-String aus und zeigt die richtige Box (Grün/Gelb/Rot) an."""
-    try:
-        stufe, feedback = eval_text.split("|", 1)
-        if "Perfekt" in stufe:
-            st.success(f"✅ **Perfekt:** {feedback.strip()}")
-        elif "Leichter Fehler" in stufe or "Fehler" in stufe:
-            st.warning(f"⚠️ **Kleiner Fehler:** {feedback.strip()}")
-        else:
-            st.error(f"❌ **Falsch:** {feedback.strip()}")
-    except:
-        st.info(f"👨‍🏫 **Feedback:** {eval_text}")
+def get_system_prompt(words_list, difficulty_level, is_start=False, start_word=None):
+    """Baut den perfekten Prompt inklusive strikter Wort-Regeln und Level."""
+    all_words_str = ", ".join(words_list)
+    base_prompt = (
+        f"ABSOLUTES VERBOT: Du bist ein Sprachpartner, aber du darfst AUSSCHLIESSLICH die folgenden Wörter benutzen: [{all_words_str}]. "
+        f"Du darfst KEIN EINZIGES WORT verwenden, das nicht in dieser Liste steht. Keine Füllwörter, keine Artikel ('el', 'la', 'un'), keine Ausnahmen! "
+        f"Es ist völlig egal, ob deine Grammatik dadurch falsch oder unnatürlich ist. Hauptsache, du nutzt nur diese Wörter! "
+    )
+    
+    if difficulty_level == "🟢 Leicht":
+        diff_prompt = "NIVEAU LEICHT: Verwende extrem kurze Sätze (maximal 3-5 Wörter). Stelle sehr simple, direkte Fragen, die leicht zu beantworten sind."
+    elif difficulty_level == "🔴 Schwer":
+        diff_prompt = "NIVEAU SCHWER: Verwende längere Sätze. Stelle komplexere, offenere Fragen, die den User zum Nachdenken zwingen."
+    else: 
+        diff_prompt = "NIVEAU MITTEL: Verwende normale Sätze und stelle thematisch passende Fragen."
+
+    if is_start:
+        action_prompt = f"STARTE DAS GESPRÄCH: Stelle mir sofort eine Frage. Du MUSST das Wort '{start_word}' in deiner Frage verwenden! Gib exakt EINEN kurzen Satz aus. Generiere keine Listen."
+    else:
+        action_prompt = "Reagiere kurz auf den User und stelle sofort eine neue Frage. Gib exakt EINEN Satz aus. Generiere keine Listen oder Erklärungen."
+        
+    return f"{base_prompt} {diff_prompt} {action_prompt}"
 
 # --- APP LAYOUT ---
 st.title("🇪🇸 Spanisch Video-Call")
@@ -274,11 +283,10 @@ if not st.session_state.call_started:
                 save_vocab(vocab_input) 
                 
                 random_start_word = random.choice(words)
+                sys_prompt = get_system_prompt(words, st.session_state.difficulty, is_start=True, start_word=random_start_word)
                 
                 with st.spinner(f"Verbindung wird aufgebaut ({st.session_state.difficulty})..."):
-                    response_data = get_integrated_response("Start", words, st.session_state.difficulty, is_start=True, start_word=random_start_word)
-                    ai_reply = response_data.get("antwort", "¿Hola, qué tal?")
-                    
+                    ai_reply = get_groq_response(sys_prompt, "Start")
                     st.session_state.history.append({"role": "assistant", "content": ai_reply})
                     save_active_call() 
                     text_to_speech(ai_reply)
@@ -306,7 +314,19 @@ if not st.session_state.call_started:
                     if msg["role"] == "user":
                         st.markdown(f"**👤 Du:** {msg['content']}")
                         if "evaluation" in msg:
-                            render_feedback(msg["evaluation"])
+                            eval_text = msg["evaluation"]
+                            try:
+                                stufe, feedback = eval_text.split("|", 1)
+                                if "Perfekt" in stufe:
+                                    st.success(f"✅ **Perfekt:** {feedback.strip()}")
+                                elif "Fehler" in stufe:
+                                    st.warning(f"⚠️ **Kleiner Fehler:** {feedback.strip()}")
+                                elif "Falsch" in stufe:
+                                    st.error(f"❌ **Falsch:** {feedback.strip()}")
+                                else:
+                                    st.info(f"👨‍🏫 **Hinweis:** {feedback.strip()}")
+                            except:
+                                st.info(f"👨‍🏫 **Feedback:** {eval_text}")
                     else:
                         st.markdown(f"**🤖 Groq KI:** {msg['content']}")
                 
@@ -338,8 +358,21 @@ if st.session_state.call_started:
         for msg in st.session_state.history:
             if msg["role"] == "user":
                 st.markdown(f"**👤 Du:** {msg['content']}")
+                
                 if "evaluation" in msg:
-                    render_feedback(msg["evaluation"])
+                    eval_text = msg["evaluation"]
+                    try:
+                        stufe, feedback = eval_text.split("|", 1)
+                        if "Perfekt" in stufe:
+                            st.success(f"✅ **Perfekt:** {feedback.strip()}")
+                        elif "Fehler" in stufe:
+                            st.warning(f"⚠️ **Kleiner Fehler:** {feedback.strip()}")
+                        elif "Falsch" in stufe:
+                            st.error(f"❌ **Falsch:** {feedback.strip()}")
+                        else:
+                            st.info(f"👨‍🏫 **Hinweis:** {feedback.strip()}")
+                    except:
+                        st.info(f"👨‍🏫 **Feedback:** {eval_text}")
             else:
                 st.markdown(f"**🤖 Groq KI:** {msg['content']}")
             
@@ -374,23 +407,24 @@ if st.session_state.call_started:
                 user_text = transcribe_audio_groq(current_audio_bytes)
                 
                 if user_text:
-                    response_data = get_integrated_response(user_text, st.session_state.vocab_list, st.session_state.difficulty, is_start=False)
+                    # Schritt 1: Lehrer-Bewertung über das schnelle Llama-3.1-8b-instant Modell
+                    evaluation_result = evaluate_spanish_sentence(user_text)
                     
-                    stufe_aus_json = response_data.get("stufe", "Falsch")
-                    feedback_aus_json = response_data.get("feedback", "Kein Feedback erhalten.")
-                    ai_reply = response_data.get("antwort", "¿Perdón?")
-                    
-                    eval_string_fuer_ui = f"{stufe_aus_json} | {feedback_aus_json}"
-                    
+                    # Schritt 2: Speichern von User-Eingabe + Bewertung
                     st.session_state.history.append({
                         "role": "user", 
                         "content": user_text,
-                        "evaluation": eval_string_fuer_ui
+                        "evaluation": evaluation_result
                     })
-                    
-                    st.session_state.history.append({"role": "assistant", "content": ai_reply})
                     save_active_call() 
                     
+                    # Schritt 3: Die normale Chat-KI antworten lassen (Nutzt ebenfalls llama-3.1-8b-instant)
+                    sys_prompt = get_system_prompt(st.session_state.vocab_list, st.session_state.difficulty, is_start=False)
+                    ai_reply = get_groq_response(sys_prompt)
+                    
+                    # Schritt 4: Antwort speichern und vorlesen
+                    st.session_state.history.append({"role": "assistant", "content": ai_reply})
+                    save_active_call() 
                     text_to_speech(ai_reply)
                     st.rerun()
                 else:
