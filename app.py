@@ -202,41 +202,51 @@ def get_integrated_response(user_text, words_list, difficulty_level, is_start=Fa
     all_words_str = ", ".join(words_list)
     used_questions_str = " | ".join(used_questions[-8:]) if used_questions else "Noch keine"
 
-    # NEU: Viel strengerer Prompt für Grammatikprüfung
+    # NEU: Extrem strenger Prompt für Wort-Limit
     base_prompt = (
         "Du bist ein STRENGER spanischer Sprach-Lehrer für einen Deutschsprachigen. "
         "Du bewertest JEDEN Satz penibel genau auf Grammatik, Wortwahl und Satzbau. "
         "WICHTIG: Antworte NUR im JSON-Format!\n\n"
-        f"ERLAUBTE WÖRTER (nur diese verwenden): [{all_words_str}]\n"
-        "Keine anderen Wörter!\n\n"
+        "=== ABSOLUTES WORT-LIMIT ===\n"
+        f"ERLAUBTE WÖRTER (NUR diese dürfen verwendet werden): [{all_words_str}]\n\n"
+        "REGEL 1: Du darfst in deiner spanischen Antwort AUSSCHLIESSLICH Wörter aus der obigen Liste verwenden. "
+        "KEINE Ausnahmen! Keine Artikel, keine Konjunktionen, keine Präpositionen die nicht in der Liste stehen. "
+        "Wenn ein Wort nicht exakt in der Liste steht, darfst du es NICHT benutzen.\n\n"
+        "REGEL 2: Wenn der User ein Wort verwendet das NICHT in der Liste steht, "
+        "dann bewerte das als 'Falsch' und erkläre im Feedback auf Deutsch: "
+        "'Du hast das Wort X verwendet, aber das ist nicht in deiner Vokabelliste. "
+        "Benutze nur diese Wörter: [Liste].'\n\n"
         "=== BEWERTUNGS-REGELN (STRENG!) ===\n"
-        "'Perfekt': NUR wenn der Satz zu 100% grammatikalisch korrekt ist, alle Wörter richtig konjugiert sind, "
+        "'Perfekt': NUR wenn der Satz zu 100% grammatikalisch korrekt ist, alle Wörter aus der Liste stammen, "
         "und die Satzstellung perfekt ist. Selbst kleinste Fehler (fehlende Akzente, falsche Artikel, falsche Konjugation) "
         "machen den Satz NICHT perfekt.\n\n"
         "'Leichter Fehler': Der Satz ist verständlich, aber enthält 1-3 kleine Fehler wie: "
         "fehlende Akzente, falsche Artikel, falsche Endungen, kleine Wortfehler. "
-        "Beispiel: 'Me gusta la clase' statt 'Me gusta el clase' = Leichter Fehler.\n\n"
+        "ODER: Der User hat ein nicht-erlaubtes Wort benutzt, aber der Rest ist ok.\n\n"
         "'Falsch': Der Satz enthält 4+ Fehler, ist unverständlich, oder verwendet Wörter die nicht in der Liste stehen. "
         "ODER: Der Satz wiederholt sich, ist unvollständig, oder macht keinen Sinn.\n\n"
         "=== ANTI-ECHO REGELN ===\n"
-        "1. Wiederhole NIEMALS den Satz des Users. "
-        "Stelle eine NEUE, UNBEKANNTE Frage.\n"
+        "1. Wiederhole NIEMALS den Satz des Users. Stelle eine NEUE, UNBEKANNTE Frage.\n"
         "2. Beantworte deine Frage NICHT selbst. Nur FRAGEN stellen.\n"
         "3. Stelle eine Frage die NOCH NICHT gestellt wurde.\n"
         "4. Jede Antwort MUSS mit ? enden.\n"
+        "5. VERWENDE NUR WÖRTER AUS DER LISTE!\n"
     )
 
     if difficulty_level == "🟢 Leicht":
         diff_prompt = (
-            "\nNIVEAU LEICHT: Sehr kurze Fragen (3-5 Wörter). Einfache Ja/Nein-Fragen."
+            "\nNIVEAU LEICHT: Sehr kurze Fragen (3-5 Wörter). Einfache Ja/Nein-Fragen. "
+            "NUR erlaubte Wörter verwenden!"
         )
     elif difficulty_level == "🔴 Schwer":
         diff_prompt = (
-            "\nNIVEAU SCHWER: Längere Fragen (6-10 Wörter). Offene Fragen."
+            "\nNIVEAU SCHWER: Längere Fragen (6-10 Wörter). Offene Fragen. "
+            "NUR erlaubte Wörter verwenden!"
         )
     else: 
         diff_prompt = (
-            "\nNIVEAU MITTEL: Normale Fragen (4-7 Wörter)."
+            "\nNIVEAU MITTEL: Normale Fragen (4-7 Wörter). "
+            "NUR erlaubte Wörter verwenden!"
         )
 
     if is_start:
@@ -244,21 +254,24 @@ def get_integrated_response(user_text, words_list, difficulty_level, is_start=Fa
     else:
         action_prompt = (
             "\n\nAUFGABE 1: BEWERTE STRENG. Zähle konkret die Fehler auf. "
-            "Wenn der User 'me gosta' statt 'me gusta' sagt, ist das 'Leichter Fehler' (falsche Konjugation). "
+            "Prüfe ob ALLE Wörter des Users in der erlaubten Liste stehen. "
+            "Wenn ein Wort fehlt, nenne es explizit im Feedback auf Deutsch. "
+            "Wenn der User 'me gosta' statt 'me gusta' sagt, ist das 'Leichter Fehler'. "
             "Wenn der User den Satz zweimal wiederholt oder 4+ Fehler macht, ist das 'Falsch'. "
-            "Wenn der Satz grammatikalisch korrekt ist aber nur ein Wort falsch geschrieben, ist das 'Leichter Fehler'. "
-            "NUR bei 0 Fehlern: 'Perfekt'.\n\n"
+            "NUR bei 0 Fehlern und nur erlaubten Wörtern: 'Perfekt'.\n\n"
             "AUFGABE 2: Stelle eine NEUE Frage auf Spanisch. "
+            "VERWENDE NUR WÖRTER AUS DER LISTE! "
             f"BEREITS GESTELLTE FRAGEN: {used_questions_str}"
         )
 
     examples = (
         "\n\n=== BEISPIELE FÜR BEWERTUNG ===\n"
         "User: 'Me gusta la clase de matemáticas.' (angenommen 'matemáticas' ist NICHT in der Wortliste)\n"
-        "→ Stufe: 'Falsch' | Feedback: 'Du hast ein Wort verwendet das nicht erlaubt ist. Bleibe bei den Vokabeln.'\n\n"
+        "→ Stufe: 'Falsch' | Feedback: 'Du hast das Wort matemáticas verwendet, aber das ist nicht in deiner Vokabelliste. "
+        "Benutze nur diese Wörter: [Liste].'\n\n"
         "User: 'Me gusta el clase.' (falscher Artikel: 'el' statt 'la')\n"
         "→ Stufe: 'Leichter Fehler' | Feedback: 'Fast richtig! Es heißt la clase, nicht el clase.'\n\n"
-        "User: 'Me gusta la clase.' (alles richtig)\n"
+        "User: 'Me gusta la clase.' (alles richtig, alle Wörter aus Liste)\n"
         "→ Stufe: 'Perfekt' | Feedback: 'Sehr gut! Alles korrekt.'\n\n"
         "User: 'Me gusta me gusta la clase.' (Wiederholung)\n"
         "→ Stufe: 'Falsch' | Feedback: 'Du hast den Satz wiederholt. Versuche einen vollständigen Satz zu bilden.'"
@@ -268,8 +281,9 @@ def get_integrated_response(user_text, words_list, difficulty_level, is_start=Fa
         "\n\n=== JSON FORMAT ===\n"
         "{\n"
         '  "stufe": "Perfekt" oder "Leichter Fehler" oder "Falsch",\n'
-        '  "feedback": "Konkretes Feedback auf Deutsch. Nenne den EXAKTEN Fehler und die korrekte Version.",\n'
-        '  "antwort": "NUR eine neue spanische FRAGE. Mit ? enden."\n'
+        '  "feedback": "Konkretes Feedback auf Deutsch. Nenne den EXAKTEN Fehler und die korrekte Version. "
+        "Wenn nicht-erlaubte Wörter verwendet wurden, nenne sie explizit.",\n"
+        '  "antwort": "NUR eine neue spanische FRAGE. NUR erlaubte Wörter aus der Liste. Mit ? enden."\n'
         "}"
     )
 
@@ -296,6 +310,17 @@ def get_integrated_response(user_text, words_list, difficulty_level, is_start=Fa
 
         ai_antwort = response_data.get("antwort", "¿Perdón?")
 
+        # Prüfe ob KI-Antwort nur erlaubte Wörter enthält
+        ai_words_clean = re.sub(r'[^\w\s]', '', ai_antwort.lower()).split()
+        allowed_words_clean = [w.lower().strip() for w in words_list]
+
+        # Wenn die KI nicht-erlaubte Wörter benutzt, Fallback-Frage
+        forbidden_in_ai = [w for w in ai_words_clean if w and w not in allowed_words_clean and len(w) > 2]
+        if forbidden_in_ai and not is_start:
+            response_data["antwort"] = generate_fallback_question(words_list, difficulty_level, used_questions)
+            response_data["feedback"] += f" (Die KI hat nicht-erlaubte Wörter benutzt: {', '.join(forbidden_in_ai)}. Fallback-Frage genutzt.)"
+
+        # Anti-Echo Check
         if not is_start and is_echo(user_text, ai_antwort):
             response_data["antwort"] = generate_fallback_question(words_list, difficulty_level, used_questions)
             response_data["feedback"] += " (Die KI wollte echoen, Fallback-Frage wurde genutzt.)"
@@ -346,9 +371,8 @@ def render_feedback(eval_text):
     except:
         st.info(f"👨‍🏫 **Feedback:** {eval_text}")
 
-# --- AUTOPLAY AUDIO (nach User-Interaktion erlaubt) ---
+# --- AUTOPLAY AUDIO ---
 def autoplay_audio(audio_b64):
-    """Spielt Audio automatisch ab nachdem User interagiert hat (Mikrofon-Button)."""
     if audio_b64:
         audio_html = f"""
         <audio autoplay="autoplay">
@@ -456,12 +480,10 @@ if st.session_state.call_started:
         </div>
     """, unsafe_allow_html=True)
 
-    # AUTOPLAY: Audio spielt automatisch nach User-Interaktion
     if st.session_state.audio_to_play:
         autoplay_audio(st.session_state.audio_to_play)
         st.session_state.audio_to_play = None
 
-    # Zeige die letzte KI-Antwort als Text an
     if st.session_state.history and st.session_state.history[-1]["role"] == "assistant":
         st.markdown(f"**🤖 KI sagt:** *{st.session_state.history[-1]['content']}*")
 
