@@ -1,5 +1,4 @@
-
-code = '''import streamlit as st
+import streamlit as st
 from groq import Groq
 from gtts import gTTS
 import io
@@ -145,8 +144,8 @@ def is_echo(user_text, ai_text):
     """Prüft ob die KI den User einfach wiederholt."""
     if not user_text or not ai_text:
         return False
-    user_clean = re.sub(r'[^\\w\\s]', '', user_text.lower()).strip()
-    ai_clean = re.sub(r'[^\\w\\s]', '', ai_text.lower()).strip()
+    user_clean = re.sub(r'[^\w\s]', '', user_text.lower()).strip()
+    ai_clean = re.sub(r'[^\w\s]', '', ai_text.lower()).strip()
     if not user_clean or not ai_clean:
         return False
     user_words = user_clean.split()
@@ -211,66 +210,66 @@ def get_integrated_response(user_text, words_list, difficulty_level, is_start=Fa
     base_prompt = (
         "Du bist ein spanischer Sprachpartner für einen Deutschsprachigen. "
         "Du führst ein GESPRÄCH auf Spanisch. "
-        "WICHTIG: Antworte NUR im JSON-Format!\\n\\n"
-        f"ERLAUBTE WÖRTER (nur diese verwenden): [{all_words_str}]\\n"
-        "Keine anderen Wörter! Keine Artikel, Konjunktionen oder Präpositionen die nicht in der Liste stehen!\\n\\n"
-        "=== ABSOLUTE REGELN ===\\n"
+        "WICHTIG: Antworte NUR im JSON-Format!\n\n"
+        f"ERLAUBTE WÖRTER (nur diese verwenden): [{all_words_str}]\n"
+        "Keine anderen Wörter! Keine Artikel, Konjunktionen oder Präpositionen die nicht in der Liste stehen!\n\n"
+        "=== ABSOLUTE REGELN ===\n"
         "1. ECHO-VERBOT: Wiederhole NIEMALS den Satz des Users. "
         "Reagiere NIEMALS mit 'A mí también...' oder 'Yo también...' auf das, was der User gesagt hat. "
-        "Stelle stattdessen eine NEUE, UNBEKANNTE Frage.\\n"
+        "Stelle stattdessen eine NEUE, UNBEKANNTE Frage.\n"
         "2. FRAGEN-VERBOT: Beantworte deine Frage NICHT selbst. "
-        "Du darfst nur FRAGEN stellen, keine Aussagen über dich machen.\\n"
-        "3. NEUHEIT: Stelle eine Frage die NOCH NICHT in diesem Gespräch gestellt wurde.\\n"
-        "4. FRAGEZEICHEN: Jede spanische Antwort MUSS mit ? enden.\\n"
+        "Du darfst nur FRAGEN stellen, keine Aussagen über dich machen.\n"
+        "3. NEUHEIT: Stelle eine Frage die NOCH NICHT in diesem Gespräch gestellt wurde.\n"
+        "4. FRAGEZEICHEN: Jede spanische Antwort MUSS mit ? enden.\n"
     )
     
     if difficulty_level == "🟢 Leicht":
         diff_prompt = (
-            "\\nNIVEAU LEICHT: Sehr kurze Fragen (3-5 Wörter). Einfache Ja/Nein-Fragen oder "
+            "\nNIVEAU LEICHT: Sehr kurze Fragen (3-5 Wörter). Einfache Ja/Nein-Fragen oder "
             "'Was...?' / 'Wie...?' Fragen. Nutze nur die einfachsten erlaubten Wörter."
         )
     elif difficulty_level == "🔴 Schwer":
         diff_prompt = (
-            "\\nNIVEAU SCHWER: Längere Fragen (6-10 Wörter). Offene Fragen die zum Nachdenken anregen. "
+            "\nNIVEAU SCHWER: Längere Fragen (6-10 Wörter). Offene Fragen die zum Nachdenken anregen. "
             "Verwende verschiedene Fragewörter. Die Frage MUSS mit ? enden."
         )
     else: 
         diff_prompt = (
-            "\\nNIVEAU MITTEL: Normale Fragen (4-7 Wörter). Stelle eine neue, thematisch passende Frage. "
+            "\nNIVEAU MITTEL: Normale Fragen (4-7 Wörter). Stelle eine neue, thematisch passende Frage. "
             "Die Frage MUSS mit ? enden."
         )
 
     if is_start:
-        action_prompt = f"\\n\\nSTARTE das Gespräch mit einer Frage. Du MUSST das Wort '{start_word}' verwenden!"
+        action_prompt = f"\n\nSTARTE das Gespräch mit einer Frage. Du MUSST das Wort '{start_word}' verwenden!"
     else:
         action_prompt = (
-            "\\n\\nAUFGABE 1: Bewerte den Satz des Users. Wähle: 'Perfekt' (alles richtig), "
+            "\n\nAUFGABE 1: Bewerte den Satz des Users. Wähle: 'Perfekt' (alles richtig), "
             "'Leichter Fehler' (verständlich, kleine Fehler), oder 'Falsch' (ergibt keinen Sinn). "
-            "Gib 1-2 Sätze Feedback auf Deutsch.\\n"
+            "Gib 1-2 Sätze Feedback auf Deutsch.\n"
             "AUFGABE 2: Stelle eine NEUE Frage auf Spanisch. "
-            "Die Frage darf NICHT eine Variation der vorherigen Fragen sein.\\n"
+            "Die Frage darf NICHT eine Variation der vorherigen Fragen sein.\n"
             f"BEREITS GESTELLTE FRAGEN (diese NICHT wiederholen): {used_questions_str}"
         )
 
     examples = (
-        "\\n\\n=== BEISPIELE ===\\n"
-        "User: 'Me gusta el agua.'\\n"
-        "SCHLECHT: 'A mí también me gusta el agua. ¿Y a ti?' (ECHO! Wiederholt das Thema!)\\n"
-        "GUT: '¿Dónde bebes el agua?' (Neue Frage, neues Thema!)\\n\\n"
-        "User: 'Hola, ¿cómo estás?'\\n"
-        "SCHLECHT: 'Hola, estoy bien. ¿Y tú?' (ECHO! Wiederholt Begrüßung!)\\n"
-        "GUT: '¿Te gusta el café?' (Komplett neue Frage!)\\n\\n"
-        "User: 'Estoy bien, gracias.'\\n"
-        "SCHLECHT: 'Me alegro. ¿Qué haces?' (Zu ähnlich!)\\n"
+        "\n\n=== BEISPIELE ===\n"
+        "User: 'Me gusta el agua.'\n"
+        "SCHLECHT: 'A mí también me gusta el agua. ¿Y a ti?' (ECHO! Wiederholt das Thema!)\n"
+        "GUT: '¿Dónde bebes el agua?' (Neue Frage, neues Thema!)\n\n"
+        "User: 'Hola, ¿cómo estás?'\n"
+        "SCHLECHT: 'Hola, estoy bien. ¿Y tú?' (ECHO! Wiederholt Begrüßung!)\n"
+        "GUT: '¿Te gusta el café?' (Komplett neue Frage!)\n\n"
+        "User: 'Estoy bien, gracias.'\n"
+        "SCHLECHT: 'Me alegro. ¿Qué haces?' (Zu ähnlich!)\n"
         "GUT: '¿Dónde vives?' (Neue Richtung!)"
     )
     
     json_instruction = (
-        "\\n\\n=== JSON FORMAT ===\\n"
-        "{\\n"
-        '  "stufe": "Perfekt" oder "Leichter Fehler" oder "Falsch",\\n'
-        '  "feedback": "Deutsches Feedback (1-2 Sätze). Was war falsch und wie richtig? Oder Lob.",\\n'
-        '  "antwort": "NUR eine neue spanische FRAGE. Nur erlaubte Wörter. Muss mit ? enden. KEINE Aussagen!"\\n'
+        "\n\n=== JSON FORMAT ===\n"
+        "{\n"
+        '  "stufe": "Perfekt" oder "Leichter Fehler" oder "Falsch",\n'
+        '  "feedback": "Deutsches Feedback (1-2 Sätze). Was war falsch und wie richtig? Oder Lob.",\n'
+        '  "antwort": "NUR eine neue spanische FRAGE. Nur erlaubte Wörter. Muss mit ? enden. KEINE Aussagen!"\n'
         "}"
     )
     
@@ -382,7 +381,7 @@ if not st.session_state.call_started:
     
     with col1:
         if st.button("📞 Neuer Video-Call", use_container_width=True, type="primary"):
-            words = [w.strip().lower() for w in re.split(r'[,\\s\\n]+', vocab_input) if w.strip()]
+            words = [w.strip().lower() for w in re.split(r'[,\s\n]+', vocab_input) if w.strip()]
             
             if len(words) < 2:
                 st.warning("Bitte füge deine Wörter ein.")
@@ -559,9 +558,3 @@ if st.session_state.call_started:
         st.session_state.used_questions = []
         st.session_state.processing = False
         st.rerun()
-'''
-
-with open("/mnt/agents/output/app.py", "w", encoding="utf-8") as f:
-    f.write(code)
-
-print("Saubere app.py gespeichert!")
