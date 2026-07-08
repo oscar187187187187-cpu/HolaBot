@@ -283,8 +283,7 @@ def get_integrated_response(user_text, words_list, difficulty_level, is_start=Fa
         "\n\n=== JSON FORMAT ===\n"
         "{\n"
         '  "stufe": "Perfekt" oder "Leichter Fehler" oder "Falsch",\n'
-        '  "feedback": "Konkretes Feedback auf Deutsch. Nenne den EXAKTEN Fehler und die korrekte Version. "
-        "Wenn nicht-erlaubte Woerter verwendet wurden, nenne sie explizit.",\n"
+        '  "feedback": "Konkretes Feedback auf Deutsch. Nenne den EXAKTEN Fehler und die korrekte Version. Wenn nicht-erlaubte Woerter verwendet wurden, nenne sie explizit.",\n'
         '  "antwort": "NUR eine neue spanische FRAGE. NUR erlaubte Woerter aus der Liste. Mit ? enden."\n'
         "}"
     )
