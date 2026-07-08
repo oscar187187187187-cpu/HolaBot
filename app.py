@@ -138,7 +138,7 @@ else:
 # --- FUNKTIONEN FÜR KI, AUDIO & LEHRER-FEEDBACK ---
 
 def evaluate_spanish_sentence(user_text):
-    """Prüft den Satz des Users auf Grammatik und Sinn mit dem großen 70B Modell."""
+    """Prüft den Satz des Users auf Grammatik und Sinn mit dem schnellen llama-3.1-8b-instant Modell."""
     sys_prompt = (
         "Du bist ein strenger aber fairer Spanisch-Lehrer. Der User lernt Spanisch. "
         "Bewerte den folgenden Satz auf Grammatik, Wortwahl und Sinn. "
@@ -148,9 +148,9 @@ def evaluate_spanish_sentence(user_text):
         "Für FEEDBACK schreibe 1 bis 2 kurze Sätze auf Deutsch, in denen du erklärst, was falsch war und wie es richtig heißt. (Wenn es 'Perfekt' ist, lobe ihn kurz)."
     )
     try:
-        # Hier nutzen wir das stärkere 70b-Modell für fehlerfreie Auswertung
+        # Nutzung von llama-3.1-8b-instant für extrem schnelle Auswertung
         completion = client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_text}
@@ -163,7 +163,7 @@ def evaluate_spanish_sentence(user_text):
         return "Perfekt | Auslastung hoch - Satz wurde automatisch als verstanden markiert!"
 
 def get_groq_response(system_prompt, user_text=None):
-    """Holt die Antwort des Gesprächspartners basierend auf dem System Prompt."""
+    """Holt die Antwort des Gesprächspartners basierend auf dem System Prompt und llama-3.1-8b-instant."""
     messages = [{"role": "system", "content": system_prompt}]
     
     for msg in st.session_state.history:
@@ -192,7 +192,7 @@ def text_to_speech(text):
         b64 = base64.b64encode(fp.getvalue()).decode()
         st.session_state.audio_to_play = b64
     except Exception as e:
-        st.error("Audio konnte nicht geladen werden. Bitte lies den Text der KI unten!")
+        st.error("Audio konnte nicht geladen werden (Google-Limit). Bitte lies den Text der KI unten!")
         st.session_state.audio_to_play = None
 
 def transcribe_audio_groq(audio_bytes):
@@ -380,11 +380,11 @@ if st.session_state.call_started:
         if st.session_state.last_processed_audio != current_audio_bytes:
             st.session_state.last_processed_audio = current_audio_bytes
             
-            with st.spinner(f"Groq analysiert deinen Sätz..."):
+            with st.spinner(f"Groq analysiert deinen Satz..."):
                 user_text = transcribe_audio_groq(current_audio_bytes)
                 
                 if user_text:
-                    # Schritt 1: Lehrer-Bewertung über das große Llama-70b Modell
+                    # Schritt 1: Lehrer-Bewertung über das schnelle Llama-3.1-8b-instant Modell
                     evaluation_result = evaluate_spanish_sentence(user_text)
                     
                     # Schritt 2: Speichern von User-Eingabe + Bewertung
@@ -395,7 +395,7 @@ if st.session_state.call_started:
                     })
                     save_active_call() 
                     
-                    # Schritt 3: Die normale Chat-KI antworten lassen
+                    # Schritt 3: Die normale Chat-KI antworten lassen (Nutzt ebenfalls llama-3.1-8b-instant)
                     sys_prompt = get_system_prompt(st.session_state.vocab_list, st.session_state.difficulty, is_start=False)
                     ai_reply = get_groq_response(sys_prompt)
                     
