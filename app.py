@@ -15,7 +15,8 @@ st.set_page_config(page_title="Spanisch Video-Call", page_icon="🇪🇸", layou
 # API-Key aus den Streamlit Secrets laden
 try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-    client = Groq(api_key=GROQ_API_KEY)
+    # ANTI-FREEZE UPDATE: max_retries=0 und timeout verhindern die unendliche Ladeschleife!
+    client = Groq(api_key=GROQ_API_KEY, max_retries=0, timeout=15.0)
 except KeyError:
     st.error("🚨 Key fehlt! Geh in die Streamlit Settings -> Secrets und füge GROQ_API_KEY = 'gsk_...' hinzu.")
     st.stop()
@@ -157,8 +158,9 @@ def evaluate_spanish_sentence(user_text):
             max_tokens=150
         )
         return completion.choices[0].message.content
-    except Exception:
-        return "Fehler | Konnte nicht bewertet werden."
+    except Exception as e:
+        # Fallback falls Groq kurzzeitig überlastet ist
+        return "Fehler | Lehrer-KI ist gerade ausgelastet, aber mach einfach weiter!"
 
 def get_groq_response(system_prompt, user_text=None):
     """Holt die Antwort des Gesprächspartners basierend auf dem System Prompt."""
@@ -179,7 +181,7 @@ def get_groq_response(system_prompt, user_text=None):
         )
         return completion.choices[0].message.content
     except Exception as e:
-        return f"Lo siento, error de Groq: {str(e)}"
+        return "Lo siento, error de conexión. Bitte sprich deinen Satz noch einmal!"
 
 def text_to_speech(text):
     """Wandelt Text in Audio um mit Anti-Freeze Schutz."""
@@ -203,7 +205,6 @@ def transcribe_audio_groq(audio_bytes):
         )
         return transcription.text
     except Exception as e:
-        st.error(f"Fehler bei der Spracherkennung: {str(e)}")
         return None
 
 def get_system_prompt(words_list, difficulty_level, is_start=False, start_word=None):
@@ -404,7 +405,8 @@ if st.session_state.call_started:
                     text_to_speech(ai_reply)
                     st.rerun()
                 else:
-                    st.error("Ich habe kein Audio erkannt. Bitte sprich noch einmal.")
+                    st.error("Limit erreicht oder Audio nicht erkannt! Bitte warte 3 Sekunden und drücke nochmal auf den Aufnahme-Knopf.")
+                    st.session_state.last_processed_audio = None # Erlaubt dir, es sofort nochmal zu versuchen
                 
     if st.button("Call beenden & dauerhaft archivieren", type="primary"):
         if st.session_state.history:
