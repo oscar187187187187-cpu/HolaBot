@@ -15,7 +15,7 @@ st.set_page_config(page_title="Spanisch Video-Call", page_icon="🇪🇸", layou
 # API-Key aus den Streamlit Secrets laden
 try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-    # ANTI-FREEZE EINSTELLUNG: max_retries auf 1 und timeout hoch, damit es stabil läuft
+    # ANTI-FREEZE EINSTELLUNG: Verhindert die Ladeschleife
     client = Groq(api_key=GROQ_API_KEY, max_retries=1, timeout=15.0)
 except KeyError:
     st.error("🚨 Key fehlt! Geh in die Streamlit Settings -> Secrets und füge GROQ_API_KEY = 'gsk_...' hinzu.")
@@ -135,40 +135,52 @@ if streak_info['last_date'] == datetime.now().date().isoformat():
 else:
     st.sidebar.warning("⚡ Heute noch nicht gelernt!")
 
-# --- FUNKTIONEN FÜR KI, AUDIO & LEHRER-FEEDBACK ---
+# --- ZENTRALE KI & AUDIO FUNKTIONEN ---
 
-def evaluate_spanish_sentence(user_text):
-    """Prüft den Satz des Users auf Grammatik und Sinn mit dem schnellen llama-3.1-8b-instant Modell."""
-    sys_prompt = (
-        "Du bist ein strenger aber fairer Spanisch-Lehrer. Der User lernt Spanisch. "
-        "Bewerte den folgenden Satz auf Grammatik, Wortwahl und Sinn. "
-        "Antworte AUSSCHLIESSLICH im folgenden Format (ohne weitere Einleitungen oder Formatierungen):\n"
-        "STUFE | FEEDBACK\n\n"
-        "Für STUFE wähle exakt eines dieser drei Wörter: Perfekt, Fehler, Falsch.\n"
-        "Für FEEDBACK schreibe 1 bis 2 kurze Sätze auf Deutsch, in denen du erklärst, was falsch war und wie es richtig heißt. (Wenn es 'Perfekt' ist, lobe ihn kurz)."
+def get_integrated_response(user_text, words_list, difficulty_level, is_start=False, start_word=None):
+    """
+    Kombiniert Lehrer-Feedback und Gesprächsantwort in einem einzigen API-Call über JSON.
+    Das verhindert Rate-Limits bei Groq komplett und garantiert fehlerfreies Parsing!
+    """
+    all_words_str = ", ".join(words_list)
+    
+    base_prompt = (
+        "Du bist ein spanischer Sprachpartner UND ein strenger Spanisch-Lehrer. "
+        "WICHTIG: Du musst zwingend im JSON-Format antworten!\n\n"
+        f"ABSOLUTES VERBOT: Du darfst für deine spanische Antwort AUSSCHLIESSLICH die folgenden Wörter benutzen: [{all_words_str}]. "
+        "Keine Ausnahmen, keine Füllwörter, keine Artikel die nicht in der Liste stehen!\n\n"
     )
-    try:
-        # Nutzung von llama-3.1-8b-instant für extrem schnelle Auswertung
-        completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": user_text}
-            ],
-            temperature=0.1,
-            max_tokens=150
-        )
-        return completion.choices[0].message.content
-    except Exception:
-        return "Perfekt | Auslastung hoch - Satz wurde automatisch als verstanden markiert!"
+    
+    if difficulty_level == "🟢 Leicht":
+        diff_prompt = "NIVEAU LEICHT: Verwende extrem kurze spanische Sätze (3-5 Wörter). Stelle sehr simple, direkte Fragen."
+    elif difficulty_level == "🔴 Schwer":
+        diff_prompt = "NIVEAU SCHWER: Verwende längere spanische Sätze. Stelle komplexere, offenere Fragen, die den User zum Nachdenken zwingen."
+    else: 
+        diff_prompt = "NIVEAU MITTEL: Verwende normale spanische Sätze und stelle thematisch passende Fragen."
 
-def get_groq_response(system_prompt, user_text=None):
-    """Holt die Antwort des Gesprächspartners basierend auf dem System Prompt und llama-3.1-8b-instant."""
+    if is_start:
+        action_prompt = f"\n\nSTARTE DAS GESPRÄCH: Stelle mir sofort eine spanische Frage. Du MUSST das Wort '{start_word}' verwenden!"
+    else:
+        action_prompt = "\n\nAufgabe 1: Bewerte meinen Satz auf Grammatik/Sinn. Aufgabe 2: Reagiere kurz auf Spanisch und stelle eine neue Frage."
+
+    json_instruction = (
+        "\n\nGib deine Antwort AUSSCHLIESSLICH als gültiges JSON-Objekt mit genau diesen drei Schlüsseln zurück:\n"
+        "{\n"
+        "  \"stufe\": \"Wähle exakt zwischen: Perfekt, Fehler, Falsch\",\n"
+        "  \"feedback\": \"1 bis 2 kurze Sätze auf Deutsch, was falsch war und wie es richtig heißt (oder ein kurzes Lob).\",\n"
+        "  \"antwort\": \"Deine spanische Antwort (nur aus den erlaubten Wörtern!)\"\n"
+        "}"
+    )
+    
+    system_prompt = base_prompt + diff_prompt + action_prompt + json_instruction
+
     messages = [{"role": "system", "content": system_prompt}]
     
-    for msg in st.session_state.history:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-        
+    # Kontext für die KI (nur die letzten paar Nachrichten für max. Geschwindigkeit)
+    for msg in st.session_state.history[-4:]:
+        if "content" in msg and msg["role"] in ["user", "assistant"]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+            
     if user_text:
         messages.append({"role": "user", "content": user_text})
         
@@ -177,11 +189,18 @@ def get_groq_response(system_prompt, user_text=None):
             model="llama-3.1-8b-instant",
             messages=messages,
             temperature=0.1, 
-            max_tokens=60
+            max_tokens=250,
+            response_format={"type": "json_object"} # ERZWINGT das JSON-Format bei Groq
         )
-        return completion.choices[0].message.content
+        # JSON-Text von Llama in ein sauberes Python-Wörterbuch (Dictionary) umwandeln
+        response_data = json.loads(completion.choices[0].message.content)
+        return response_data
     except Exception as e:
-        return "Lo siento, error de conexión. Bitte sprich deinen Satz noch einmal!"
+        return {
+            "stufe": "Fehler",
+            "feedback": "Verbindungsproblem mit Groq. Bitte sprich deinen Satz noch einmal!",
+            "antwort": "Lo siento, error de conexión."
+        }
 
 def text_to_speech(text):
     """Wandelt Text in Audio um mit Anti-Freeze Schutz."""
@@ -207,28 +226,6 @@ def transcribe_audio_groq(audio_bytes):
     except Exception as e:
         return None
 
-def get_system_prompt(words_list, difficulty_level, is_start=False, start_word=None):
-    """Baut den perfekten Prompt inklusive strikter Wort-Regeln und Level."""
-    all_words_str = ", ".join(words_list)
-    base_prompt = (
-        f"ABSOLUTES VERBOT: Du bist ein Sprachpartner, aber du darfst AUSSCHLIESSLICH die folgenden Wörter benutzen: [{all_words_str}]. "
-        f"Du darfst KEIN EINZIGES WORT verwenden, das nicht in dieser Liste steht. Keine Füllwörter, keine Artikel ('el', 'la', 'un'), keine Ausnahmen! "
-        f"Es ist völlig egal, ob deine Grammatik dadurch falsch oder unnatürlich ist. Hauptsache, du nutzt nur diese Wörter! "
-    )
-    
-    if difficulty_level == "🟢 Leicht":
-        diff_prompt = "NIVEAU LEICHT: Verwende extrem kurze Sätze (maximal 3-5 Wörter). Stelle sehr simple, direkte Fragen, die leicht zu beantworten sind."
-    elif difficulty_level == "🔴 Schwer":
-        diff_prompt = "NIVEAU SCHWER: Verwende längere Sätze. Stelle komplexere, offenere Fragen, die den User zum Nachdenken zwingen."
-    else: 
-        diff_prompt = "NIVEAU MITTEL: Verwende normale Sätze und stelle thematisch passende Fragen."
-
-    if is_start:
-        action_prompt = f"STARTE DAS GESPRÄCH: Stelle mir sofort eine Frage. Du MUSST das Wort '{start_word}' in deiner Frage verwenden! Gib exakt EINEN kurzen Satz aus. Generiere keine Listen."
-    else:
-        action_prompt = "Reagiere kurz auf den User und stelle sofort eine neue Frage. Gib exakt EINEN Satz aus. Generiere keine Listen oder Erklärungen."
-        
-    return f"{base_prompt} {diff_prompt} {action_prompt}"
 
 # --- APP LAYOUT ---
 st.title("🇪🇸 Spanisch Video-Call")
@@ -264,10 +261,12 @@ if not st.session_state.call_started:
                 save_vocab(vocab_input) 
                 
                 random_start_word = random.choice(words)
-                sys_prompt = get_system_prompt(words, st.session_state.difficulty, is_start=True, start_word=random_start_word)
                 
                 with st.spinner(f"Verbindung wird aufgebaut ({st.session_state.difficulty})..."):
-                    ai_reply = get_groq_response(sys_prompt, "Start")
+                    # Beim Start macht die KI den ersten Move
+                    response_data = get_integrated_response("Start", words, st.session_state.difficulty, is_start=True, start_word=random_start_word)
+                    ai_reply = response_data.get("antwort", "Hola.")
+                    
                     st.session_state.history.append({"role": "assistant", "content": ai_reply})
                     save_active_call() 
                     text_to_speech(ai_reply)
@@ -384,24 +383,29 @@ if st.session_state.call_started:
                 user_text = transcribe_audio_groq(current_audio_bytes)
                 
                 if user_text:
-                    # Schritt 1: Lehrer-Bewertung über das schnelle Llama-3.1-8b-instant Modell
-                    evaluation_result = evaluate_spanish_sentence(user_text)
+                    # EINZIGER API-CALL FÜR BEIDES (Feedback & Antwort) über JSON Format
+                    response_data = get_integrated_response(user_text, st.session_state.vocab_list, st.session_state.difficulty, is_start=False)
                     
-                    # Schritt 2: Speichern von User-Eingabe + Bewertung
+                    # Extrahiere die Daten aus dem JSON
+                    stufe_aus_json = response_data.get("stufe", "Fehler")
+                    feedback_aus_json = response_data.get("feedback", "Kein Feedback erhalten.")
+                    ai_reply = response_data.get("antwort", "Lo siento, error.")
+                    
+                    # Baue den String für die UI genau so auf, wie die UI ihn farblich erwartet
+                    eval_string_fuer_ui = f"{stufe_aus_json} | {feedback_aus_json}"
+                    
+                    # 1. Speichern des User-Textes inkl. Feedback-String
                     st.session_state.history.append({
                         "role": "user", 
                         "content": user_text,
-                        "evaluation": evaluation_result
+                        "evaluation": eval_string_fuer_ui
                     })
-                    save_active_call() 
                     
-                    # Schritt 3: Die normale Chat-KI antworten lassen (Nutzt ebenfalls llama-3.1-8b-instant)
-                    sys_prompt = get_system_prompt(st.session_state.vocab_list, st.session_state.difficulty, is_start=False)
-                    ai_reply = get_groq_response(sys_prompt)
-                    
-                    # Schritt 4: Antwort speichern und vorlesen
+                    # 2. Speichern der KI-Antwort
                     st.session_state.history.append({"role": "assistant", "content": ai_reply})
                     save_active_call() 
+                    
+                    # 3. Audio abspielen lassen
                     text_to_speech(ai_reply)
                     st.rerun()
                 else:
