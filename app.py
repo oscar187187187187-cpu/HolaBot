@@ -7,6 +7,7 @@ import os
 import json
 import re
 import random
+import time
 from datetime import datetime, timedelta
 
 # --- EINSTELLUNGEN ---
@@ -127,6 +128,8 @@ if "used_questions" not in st.session_state:
     st.session_state.used_questions = []
 if "processing" not in st.session_state:
     st.session_state.processing = False
+if "processing_start_time" not in st.session_state:
+    st.session_state.processing_start_time = None
 
 streak_info = load_streak()
 past_saved_calls = load_past_calls()
@@ -202,7 +205,6 @@ def get_integrated_response(user_text, words_list, difficulty_level, is_start=Fa
     all_words_str = ", ".join(words_list)
     used_questions_str = " | ".join(used_questions[-8:]) if used_questions else "Noch keine"
 
-    # FIX: Alle Anfuehrungszeichen im Prompt korrekt escapen
     base_prompt = (
         "Du bist ein STRENGER spanischer Sprach-Lehrer fuer einen Deutschsprachigen. "
         "Du bewertest JEDEN Satz penibel genau auf Grammatik, Wortwahl und Satzbau. "
@@ -413,6 +415,7 @@ if not st.session_state.call_started:
                 st.session_state.last_processed_audio = None
                 st.session_state.used_questions = []
                 st.session_state.processing = False
+                st.session_state.processing_start_time = None
                 save_vocab(vocab_input) 
 
                 random_start_word = random.choice(words)
@@ -441,6 +444,7 @@ if not st.session_state.call_started:
                 st.session_state.call_started = True
                 st.session_state.last_processed_audio = None
                 st.session_state.processing = False
+                st.session_state.processing_start_time = None
                 st.rerun()
         else:
             st.button("🔄 Kein aktiver Call offen", use_container_width=True, disabled=True)
@@ -466,6 +470,7 @@ if not st.session_state.call_started:
                     st.session_state.call_started = True
                     st.session_state.last_processed_audio = None
                     st.session_state.processing = False
+                    st.session_state.processing_start_time = None
                     save_active_call()
                     st.rerun()
 
@@ -514,6 +519,17 @@ if st.session_state.call_started:
             save_active_call()
             st.rerun()
 
+    # === FIX: Timeout fuer Processing-Modus ===
+    # Wenn processing laenger als 30 Sekunden aktiv ist, resetten
+    if st.session_state.processing and st.session_state.processing_start_time:
+        elapsed = time.time() - st.session_state.processing_start_time
+        if elapsed > 30:
+            st.session_state.processing = False
+            st.session_state.last_processed_audio = None
+            st.session_state.processing_start_time = None
+            st.error("⏱️ Timeout! Die Verarbeitung hat zu lange gedauert. Bitte versuche es erneut.")
+            st.rerun()
+
     if not st.session_state.processing:
         audio_value = st.audio_input("Halte den Knopf zum Sprechen:")
 
@@ -523,6 +539,7 @@ if st.session_state.call_started:
             if st.session_state.last_processed_audio != current_audio_bytes:
                 st.session_state.last_processed_audio = current_audio_bytes
                 st.session_state.processing = True
+                st.session_state.processing_start_time = time.time()
                 st.rerun()
     else:
         st.info("⏳ Groq analysiert deinen Satz...")
@@ -554,15 +571,18 @@ if st.session_state.call_started:
 
                 text_to_speech(ai_reply)
                 st.session_state.processing = False
+                st.session_state.processing_start_time = None
                 save_active_call()
                 st.rerun()
             else:
                 st.error("Audio nicht erkannt. Bitte versuche es noch einmal!")
                 st.session_state.last_processed_audio = None
                 st.session_state.processing = False
+                st.session_state.processing_start_time = None
                 st.rerun()
         else:
             st.session_state.processing = False
+            st.session_state.processing_start_time = None
 
     if st.button("Call beenden & dauerhaft archivieren", type="primary"):
         if st.session_state.history:
@@ -575,4 +595,5 @@ if st.session_state.call_started:
         st.session_state.last_processed_audio = None
         st.session_state.used_questions = []
         st.session_state.processing = False
+        st.session_state.processing_start_time = None
         st.rerun()
