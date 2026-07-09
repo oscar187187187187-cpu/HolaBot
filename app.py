@@ -138,25 +138,27 @@ else:
 # --- FUNKTIONEN FÜR KI, AUDIO & LEHRER-FEEDBACK ---
 
 def evaluate_spanish_sentence(user_text):
-    """Prüft den Satz balanciert: Toleriert Mikrofonfehler, straft echte Fehler kurz und knackig ab."""
+    """Prüft den Satz des Users präzise auf Rechtschreibung, Grammatik und Sinn."""
     sys_prompt = (
-        "Du bist ein fairer Spanisch-Lehrer. Deine Muttersprache ist Deutsch.\n"
-        "ZIEL: Finde ein gesundes Mittelding zwischen Fehler-Suchen und Verständlichkeit.\n\n"
-        "DEINE REGELN:\n"
-        "1. FORMAT: Antworte IMMER exakt im Format: STUFE | FEEDBACK (Maximal 1-2 Sätze!).\n"
-        "2. WANN IST ES 'Perfekt'?\n"
-        "   - Wenn der Satz grammatikalisch und inhaltlich Sinn ergibt (z.B. 'como pizza a menudo', 'yo practico en este parque').\n"
-        "   - Wenn es nur winzige Mikrofon-Fehler (Stottern wie 'que que' oder 'Dzo' statt 'Yo') sind, der Rest aber stimmt.\n"
-        "   - FEEDBACK bei Perfekt: Immer kurz loben, z.B. 'Perfekt | Super, das war absolut verständlich!'\n"
-        "3. WANN IST ES EIN 'Fehler'?\n"
-        "   - Falsches Wort genutzt (z.B. italienisch 'giorno' statt 'día').\n"
-        "   - Falsche Konjugation (z.B. 'todos comamos' im Indikativ-Kontext statt 'comemos', oder 'me gusta leo').\n"
-        "   - Falsches Basis-Verb (z.B. 'estoy alto' statt 'soy alto', oder 'soy en Alemania' statt 'estoy').\n"
-        "   - Falsches Geschlecht bei Adjektiven (z.B. 'él no es divertida' statt 'divertido').\n"
-        "   - FEEDBACK bei Fehler: Sag kurz und direkt auf Deutsch, was falsch war und wie es richtig heißt. Kein langes Gerede!\n\n"
-        "BEISPIEL FÜR FEHLER:\n"
-        "User: un giorno como sandwiches\n"
-        "Du: Fehler | 'Giorno' ist Italienisch. Auf Spanisch heißt es 'un día'. Richtig: 'No, un día como sándwiches.'\n"
+        "Du bist ein intelligenter und fairer Spanisch-Lehrer. Deine eigene Muttersprache ist ein makelloses, fehlerfreies Deutsch.\n"
+        "Da der Schüler eine Spracheingabe nutzt (Speech-to-Text), erkenne typische Hörfehler (z.B. 'Dzo' = 'Yo', 'Joe' = 'Yo', 'mecha' = 'mucha/mi').\n"
+        "Bewerte den Spanisch-Satz des Schülers auf:\n"
+        "- Ser vs. Estar (z.B. 'estoy en Alemania', NICHT 'soy en Alemania')\n"
+        "- Geschlecht & Artikel ('una tienda', 'mi amigo Oscar')\n"
+        "- Konjugationen und Rechtschreibung (Akzente).\n\n"
+        "Regel 1: Wenn der Satz fehlerfrei und natürlich ist, lautet die Stufe 'Perfekt'. ERFINDE KEINE FEHLER! Wenn der Satz richtig ist, lobe den Schüler einfach. Konstruiere keine unsinnigen Kritikpunkte!\n"
+        "Regel 2: Jeder ECHTE Grammatik-, Wort- oder Akzentfehler ist ein 'Fehler'.\n"
+        "Regel 3: Wenn der Satz völlig sinnlos ist, ist er 'Falsch'.\n"
+        "Regel 4: Dein Feedback MUSS den komplett korrigierten Satz enthalten, falls ein Fehler vorliegt.\n\n"
+        "Antworte IMMER exakt im Format: STUFE | FEEDBACK\n\n"
+        "Beispiele:\n"
+        "User: Yo practico en este parque.\n"
+        "Du: Perfekt | Fantastisch! Dein Satz ist absolut fehlerfrei und richtig.\n\n"
+        "User: Dzo soy en Alemania.\n"
+        "Du: Fehler | 'Dzo' war wohl 'Yo'. Für Orte benutzt man 'estar', nicht 'ser'. Richtig ist: 'Yo estoy en Alemania'.\n\n"
+        "User: Yo trabajo en un tienda.\n"
+        "Du: Fehler | 'tienda' ist weiblich. Richtig ist: 'Yo trabajo en una tienda'.\n\n"
+        "JETZT BEWERTE DIESEN SATZ FAIR UND OHNE HALLUZINATIONEN:"
     )
     try:
         completion = client.chat.completions.create(
@@ -166,11 +168,11 @@ def evaluate_spanish_sentence(user_text):
                 {"role": "user", "content": user_text}
             ],
             temperature=0.0,
-            max_tokens=80
+            max_tokens=150
         )
         return completion.choices[0].message.content
     except Exception:
-        return "System | ⚠️ Groq ist gerade stark ausgelastet."
+        return "System | ⚠️ Groq ist gerade stark ausgelastet. Der Lehrer konnte diesen einen Satz nicht prüfen."
 
 def get_groq_response(system_prompt, user_text=None):
     """Holt die Antwort des Gesprächspartners basierend auf dem System Prompt und llama-3.1-8b-instant."""
@@ -312,7 +314,7 @@ if not st.session_state.call_started:
                                 if "Perfekt" in stufe:
                                     st.success(f"✅ **Perfekt:** {feedback.strip()}")
                                 elif "Fehler" in stufe:
-                                    st.warning(f"⚠️ **Fehler:** {feedback.strip()}")
+                                    st.warning(f"⚠️ **Kleiner Fehler:** {feedback.strip()}")
                                 elif "Falsch" in stufe:
                                     st.error(f"❌ **Falsch:** {feedback.strip()}")
                                 else:
@@ -358,7 +360,7 @@ if st.session_state.call_started:
                         if "Perfekt" in stufe:
                             st.success(f"✅ **Perfekt:** {feedback.strip()}")
                         elif "Fehler" in stufe:
-                            st.warning(f"⚠️ **Fehler:** {feedback.strip()}")
+                            st.warning(f"⚠️ **Kleiner Fehler:** {feedback.strip()}")
                         elif "Falsch" in stufe:
                             st.error(f"❌ **Falsch:** {feedback.strip()}")
                         else:
