@@ -138,27 +138,17 @@ else:
 # --- FUNKTIONEN FÜR KI, AUDIO & LEHRER-FEEDBACK ---
 
 def evaluate_spanish_sentence(user_text):
-    """Prüft den Satz des Users präzise auf Rechtschreibung, Grammatik und Sinn."""
+    """Prüft den Satz des Users mit absolutem Fokus auf kurze, prägnante Antworten ohne Halluzinationen."""
     sys_prompt = (
-        "Du bist ein intelligenter und fairer Spanisch-Lehrer. Deine eigene Muttersprache ist ein makelloses, fehlerfreies Deutsch.\n"
-        "Da der Schüler eine Spracheingabe nutzt (Speech-to-Text), erkenne typische Hörfehler (z.B. 'Dzo' = 'Yo', 'Joe' = 'Yo', 'mecha' = 'mucha/mi').\n"
-        "Bewerte den Spanisch-Satz des Schülers auf:\n"
-        "- Ser vs. Estar (z.B. 'estoy en Alemania', NICHT 'soy en Alemania')\n"
-        "- Geschlecht & Artikel ('una tienda', 'mi amigo Oscar')\n"
-        "- Konjugationen und Rechtschreibung (Akzente).\n\n"
-        "Regel 1: Wenn der Satz fehlerfrei und natürlich ist, lautet die Stufe 'Perfekt'. ERFINDE KEINE FEHLER! Wenn der Satz richtig ist, lobe den Schüler einfach. Konstruiere keine unsinnigen Kritikpunkte!\n"
-        "Regel 2: Jeder ECHTE Grammatik-, Wort- oder Akzentfehler ist ein 'Fehler'.\n"
-        "Regel 3: Wenn der Satz völlig sinnlos ist, ist er 'Falsch'.\n"
-        "Regel 4: Dein Feedback MUSS den komplett korrigierten Satz enthalten, falls ein Fehler vorliegt.\n\n"
-        "Antworte IMMER exakt im Format: STUFE | FEEDBACK\n\n"
-        "Beispiele:\n"
-        "User: Yo practico en este parque.\n"
-        "Du: Perfekt | Fantastisch! Dein Satz ist absolut fehlerfrei und richtig.\n\n"
-        "User: Dzo soy en Alemania.\n"
-        "Du: Fehler | 'Dzo' war wohl 'Yo'. Für Orte benutzt man 'estar', nicht 'ser'. Richtig ist: 'Yo estoy en Alemania'.\n\n"
-        "User: Yo trabajo en un tienda.\n"
-        "Du: Fehler | 'tienda' ist weiblich. Richtig ist: 'Yo trabajo en una tienda'.\n\n"
-        "JETZT BEWERTE DIESEN SATZ FAIR UND OHNE HALLUZINATIONEN:"
+        "Du bist ein extrem lockerer Spanisch-Tutor. Deine Muttersprache ist Deutsch.\n"
+        "FOKUS: Kommunikation! Wenn man den Satz versteht, ist er richtig.\n\n"
+        "ABSOLUTE REGELN FÜR DEIN FEEDBACK:\n"
+        "1. KEINE ROMANE: Dein Feedback darf MAXIMAL aus 1 bis 2 kurzen Sätzen bestehen!\n"
+        "2. KEIN LAUTES NACHDENKEN: Benutze niemals Phrasen wie 'Es scheint als ob', 'Allerdings' oder 'Ein möglicher Satz wäre'. Komm sofort auf den Punkt!\n"
+        "3. PERFEKT: Wenn der Satz Sinn ergibt (z.B. 'como pizza' oder 'no hablo español'), schreibe NUR: 'Perfekt | Super, das war verständlich!' Erfinde keine Fehler.\n"
+        "4. MIKROFON-FEHLER IGNORIEREN: Stottern ('que que') oder völlig absurde Wörter ('pecho' statt 'perro', 'galea') ignorierst du komplett und gibst ein 'Perfekt', wenn der Rest okay war.\n"
+        "5. ECHTE FEHLER: Nur bei völlig falschen Verben (ser/estar) korrigierst du KURZ. Beispiel: 'Fehler | Für Orte benutzt man estar: Estoy en Alemania.'\n\n"
+        "Antworte IMMER exakt im Format: STUFE | FEEDBACK\n"
     )
     try:
         completion = client.chat.completions.create(
@@ -168,11 +158,11 @@ def evaluate_spanish_sentence(user_text):
                 {"role": "user", "content": user_text}
             ],
             temperature=0.0,
-            max_tokens=150
+            max_tokens=80 # <-- WICHTIG: Begrenzt die Antwortlänge radikal, damit er nicht faseln kann!
         )
         return completion.choices[0].message.content
     except Exception:
-        return "System | ⚠️ Groq ist gerade stark ausgelastet. Der Lehrer konnte diesen einen Satz nicht prüfen."
+        return "System | ⚠️ Groq ist gerade stark ausgelastet."
 
 def get_groq_response(system_prompt, user_text=None):
     """Holt die Antwort des Gesprächspartners basierend auf dem System Prompt und llama-3.1-8b-instant."""
@@ -314,7 +304,7 @@ if not st.session_state.call_started:
                                 if "Perfekt" in stufe:
                                     st.success(f"✅ **Perfekt:** {feedback.strip()}")
                                 elif "Fehler" in stufe:
-                                    st.warning(f"⚠️ **Kleiner Fehler:** {feedback.strip()}")
+                                    st.warning(f"⚠️ **Fehler:** {feedback.strip()}")
                                 elif "Falsch" in stufe:
                                     st.error(f"❌ **Falsch:** {feedback.strip()}")
                                 else:
@@ -360,7 +350,7 @@ if st.session_state.call_started:
                         if "Perfekt" in stufe:
                             st.success(f"✅ **Perfekt:** {feedback.strip()}")
                         elif "Fehler" in stufe:
-                            st.warning(f"⚠️ **Kleiner Fehler:** {feedback.strip()}")
+                            st.warning(f"⚠️ **Fehler:** {feedback.strip()}")
                         elif "Falsch" in stufe:
                             st.error(f"❌ **Falsch:** {feedback.strip()}")
                         else:
