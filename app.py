@@ -140,27 +140,27 @@ else:
 def evaluate_spanish_sentence(user_text):
     """Prüft den Satz des Users präzise auf Rechtschreibung, Grammatik und Sinn."""
     sys_prompt = (
-        "Du bist ein extrem strenger und präziser Spanisch-Lehrer. Deine eigene Muttersprache ist ein makelloses, fehlerfreies Deutsch.\n"
+        "Du bist ein intelligenter und fairer Spanisch-Lehrer. Deine eigene Muttersprache ist ein makelloses, fehlerfreies Deutsch.\n"
         "Da der Schüler eine Spracheingabe nutzt (Speech-to-Text), erkenne typische Hörfehler (z.B. 'Dzo' = 'Yo', 'Joe' = 'Yo', 'mecha' = 'mucha/mi').\n"
-        "Bewerte den Spanisch-Satz des Schülers gnadenlos auf:\n"
+        "Bewerte den Spanisch-Satz des Schülers auf:\n"
         "- Ser vs. Estar (z.B. 'estoy en Alemania', NICHT 'soy en Alemania')\n"
         "- Geschlecht & Artikel ('una tienda', 'mi amigo Oscar')\n"
         "- Konjugationen und Rechtschreibung (Akzente).\n\n"
-        "Regel 1: Jeder noch so kleine Grammatik-, Wort- oder Akzentfehler ist ein 'Fehler'.\n"
-        "Regel 2: Wenn der Satz völlig sinnlos ist, ist er 'Falsch'.\n"
-        "Regel 3: Dein Feedback MUSS den komplett korrigierten Satz enthalten. Behaupte NIEMALS, etwas Falsches sei richtig!\n\n"
+        "Regel 1: Wenn der Satz fehlerfrei und natürlich ist, lautet die Stufe 'Perfekt'. ERFINDE KEINE FEHLER! Wenn der Satz richtig ist, lobe den Schüler einfach. Konstruiere keine unsinnigen Kritikpunkte!\n"
+        "Regel 2: Jeder ECHTE Grammatik-, Wort- oder Akzentfehler ist ein 'Fehler'.\n"
+        "Regel 3: Wenn der Satz völlig sinnlos ist, ist er 'Falsch'.\n"
+        "Regel 4: Dein Feedback MUSS den komplett korrigierten Satz enthalten, falls ein Fehler vorliegt.\n\n"
         "Antworte IMMER exakt im Format: STUFE | FEEDBACK\n\n"
         "Beispiele:\n"
-        "User: Dzo soy en Alemania\n"
+        "User: Yo practico en este parque.\n"
+        "Du: Perfekt | Fantastisch! Dein Satz ist absolut fehlerfrei und richtig.\n\n"
+        "User: Dzo soy en Alemania.\n"
         "Du: Fehler | 'Dzo' war wohl 'Yo'. Für Orte benutzt man 'estar', nicht 'ser'. Richtig ist: 'Yo estoy en Alemania'.\n\n"
-        "User: Yo trabajo en un tienda\n"
+        "User: Yo trabajo en un tienda.\n"
         "Du: Fehler | 'tienda' ist weiblich. Richtig ist: 'Yo trabajo en una tienda'.\n\n"
-        "User: Mi mecha amiga Oscar\n"
-        "Du: Falsch | Oscar ist männlich ('amigo'). Richtig wäre z.B.: 'Mi amigo Oscar'.\n\n"
-        "JETZT BEWERTE DIESEN SATZ STRENG:"
+        "JETZT BEWERTE DIESEN SATZ FAIR UND OHNE HALLUZINATIONEN:"
     )
     try:
-        # Wir nutzen das schlauste Modell (llama-3.3-70b-versatile) NUR für den Lehrer, damit die Grammatik 100% stimmt!
         completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
@@ -172,7 +172,6 @@ def evaluate_spanish_sentence(user_text):
         )
         return completion.choices[0].message.content
     except Exception:
-        # Wenn Groq kurz hängt, markieren wir es als System-Fehler!
         return "System | ⚠️ Groq ist gerade stark ausgelastet. Der Lehrer konnte diesen einen Satz nicht prüfen."
 
 def get_groq_response(system_prompt, user_text=None):
@@ -189,7 +188,7 @@ def get_groq_response(system_prompt, user_text=None):
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=messages,
-            temperature=0.3, # Erhöht auf 0.3, damit die KI nicht immer dieselbe Frage wiederholt!
+            temperature=0.3,
             max_tokens=60
         )
         return completion.choices[0].message.content
@@ -402,7 +401,7 @@ if st.session_state.call_started:
                 user_text = transcribe_audio_groq(current_audio_bytes)
                 
                 if user_text:
-                    # Schritt 1: Lehrer-Bewertung über das schnelle Llama-3.1-8b-instant Modell
+                    # Schritt 1: Lehrer-Bewertung über das clevere Llama-3.3-70b-versatile Modell
                     evaluation_result = evaluate_spanish_sentence(user_text)
                     
                     # Schritt 2: Speichern von User-Eingabe + Bewertung
@@ -413,7 +412,7 @@ if st.session_state.call_started:
                     })
                     save_active_call() 
                     
-                    # Schritt 3: Die normale Chat-KI antworten lassen (Nutzt ebenfalls llama-3.1-8b-instant)
+                    # Schritt 3: Die normale Chat-KI antworten lassen (Nutzt llama-3.1-8b-instant)
                     sys_prompt = get_system_prompt(st.session_state.vocab_list, st.session_state.difficulty, is_start=False)
                     ai_reply = get_groq_response(sys_prompt)
                     
