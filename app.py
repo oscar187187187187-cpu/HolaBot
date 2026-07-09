@@ -138,17 +138,25 @@ else:
 # --- FUNKTIONEN FÜR KI, AUDIO & LEHRER-FEEDBACK ---
 
 def evaluate_spanish_sentence(user_text):
-    """Prüft den Satz des Users mit absolutem Fokus auf kurze, prägnante Antworten ohne Halluzinationen."""
+    """Prüft den Satz balanciert: Toleriert Mikrofonfehler, straft echte Fehler kurz und knackig ab."""
     sys_prompt = (
-        "Du bist ein extrem lockerer Spanisch-Tutor. Deine Muttersprache ist Deutsch.\n"
-        "FOKUS: Kommunikation! Wenn man den Satz versteht, ist er richtig.\n\n"
-        "ABSOLUTE REGELN FÜR DEIN FEEDBACK:\n"
-        "1. KEINE ROMANE: Dein Feedback darf MAXIMAL aus 1 bis 2 kurzen Sätzen bestehen!\n"
-        "2. KEIN LAUTES NACHDENKEN: Benutze niemals Phrasen wie 'Es scheint als ob', 'Allerdings' oder 'Ein möglicher Satz wäre'. Komm sofort auf den Punkt!\n"
-        "3. PERFEKT: Wenn der Satz Sinn ergibt (z.B. 'como pizza' oder 'no hablo español'), schreibe NUR: 'Perfekt | Super, das war verständlich!' Erfinde keine Fehler.\n"
-        "4. MIKROFON-FEHLER IGNORIEREN: Stottern ('que que') oder völlig absurde Wörter ('pecho' statt 'perro', 'galea') ignorierst du komplett und gibst ein 'Perfekt', wenn der Rest okay war.\n"
-        "5. ECHTE FEHLER: Nur bei völlig falschen Verben (ser/estar) korrigierst du KURZ. Beispiel: 'Fehler | Für Orte benutzt man estar: Estoy en Alemania.'\n\n"
-        "Antworte IMMER exakt im Format: STUFE | FEEDBACK\n"
+        "Du bist ein fairer Spanisch-Lehrer. Deine Muttersprache ist Deutsch.\n"
+        "ZIEL: Finde ein gesundes Mittelding zwischen Fehler-Suchen und Verständlichkeit.\n\n"
+        "DEINE REGELN:\n"
+        "1. FORMAT: Antworte IMMER exakt im Format: STUFE | FEEDBACK (Maximal 1-2 Sätze!).\n"
+        "2. WANN IST ES 'Perfekt'?\n"
+        "   - Wenn der Satz grammatikalisch und inhaltlich Sinn ergibt (z.B. 'como pizza a menudo', 'yo practico en este parque').\n"
+        "   - Wenn es nur winzige Mikrofon-Fehler (Stottern wie 'que que' oder 'Dzo' statt 'Yo') sind, der Rest aber stimmt.\n"
+        "   - FEEDBACK bei Perfekt: Immer kurz loben, z.B. 'Perfekt | Super, das war absolut verständlich!'\n"
+        "3. WANN IST ES EIN 'Fehler'?\n"
+        "   - Falsches Wort genutzt (z.B. italienisch 'giorno' statt 'día').\n"
+        "   - Falsche Konjugation (z.B. 'todos comamos' im Indikativ-Kontext statt 'comemos', oder 'me gusta leo').\n"
+        "   - Falsches Basis-Verb (z.B. 'estoy alto' statt 'soy alto', oder 'soy en Alemania' statt 'estoy').\n"
+        "   - Falsches Geschlecht bei Adjektiven (z.B. 'él no es divertida' statt 'divertido').\n"
+        "   - FEEDBACK bei Fehler: Sag kurz und direkt auf Deutsch, was falsch war und wie es richtig heißt. Kein langes Gerede!\n\n"
+        "BEISPIEL FÜR FEHLER:\n"
+        "User: un giorno como sandwiches\n"
+        "Du: Fehler | 'Giorno' ist Italienisch. Auf Spanisch heißt es 'un día'. Richtig: 'No, un día como sándwiches.'\n"
     )
     try:
         completion = client.chat.completions.create(
@@ -158,7 +166,7 @@ def evaluate_spanish_sentence(user_text):
                 {"role": "user", "content": user_text}
             ],
             temperature=0.0,
-            max_tokens=80 # <-- WICHTIG: Begrenzt die Antwortlänge radikal, damit er nicht faseln kann!
+            max_tokens=80
         )
         return completion.choices[0].message.content
     except Exception:
