@@ -243,7 +243,7 @@ def get_system_prompt(words_list, difficulty_level, is_start=False, start_word=N
         action_prompt = "\nReagiere kurz auf den User und stelle sofort eine NEUE Frage, die du noch NICHT gestellt hast. Gib exakt EINEN Satz aus. Generiere keine Listen oder Erklärungen."
         
     return f"{base_prompt} {diff_prompt} {action_prompt}"
-    
+
 # --- APP LAYOUT ---
 st.title("🇪🇸 Spanisch Video-Call")
 diff_options = ["🟢 Leicht", "🟡 Mittel", "🔴 Schwer"]
