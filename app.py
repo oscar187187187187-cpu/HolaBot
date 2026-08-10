@@ -2,24 +2,34 @@ import streamlit as st
 import requests
 import os
 from groq import Groq
-from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip
+from PIL import Image, ImageDraw
+from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip
 
 st.set_page_config(page_title="Social Video Creator", layout="centered")
 
 st.title("🎬 1-Min+ Video Creator (Mobil & Free)")
 st.write("Erstelle aus deinem Audio ein fertiges Social-Media-Video.")
 
-# Einstellungen in der Seitenleiste
-st.sidebar.header("API Schlüssel")
-groq_key = st.sidebar.text_input("Groq API Key (Gratis)", type="password")
-pexels_key = st.sidebar.text_input("Pexels API Key (Gratis)", type="password")
+# --- API Keys automatisch aus Streamlit Secrets auslesen ---
+groq_key = st.secrets.get("GROQ_API_KEY", "")
+pexels_key = st.secrets.get("PEXELS_API_KEY", "")
+
+# Falls Secrets fehlen oder leer sind, als Ausweichoption Seitenleiste anzeigen
+if not groq_key or not pexels_key:
+    st.sidebar.header("API Schlüssel manuell eingeben")
+    if not groq_key:
+        groq_key = st.sidebar.text_input("Groq API Key (Gratis)", type="password")
+    if not pexels_key:
+        pexels_key = st.sidebar.text_input("Pexels API Key (Gratis)", type="password")
+else:
+    st.sidebar.success("✅ API Keys automatisch geladen!")
 
 audio_file = st.file_uploader("Audio hochladen (MP3/WAV)", type=["mp3", "wav"])
 search_keyword = st.text_input("Suchbegriff für Hintergrundvideo", "nature")
 
 if st.button("🚀 Video jetzt generieren") and audio_file:
     if not groq_key or not pexels_key:
-        st.error("Bitte gib zuerst beide API-Key in der Seitenleiste ein!")
+        st.error("Bitte gib zuerst beide API-Keys ein oder hinterlege sie in den Streamlit Secrets!")
     else:
         with st.spinner("Server verarbeitet dein Video... Bitte Seite nicht schließen!"):
             
@@ -64,8 +74,14 @@ if st.button("🚀 Video jetzt generieren") and audio_file:
                 duration = audio.duration
                 bg_looped = bg.loop(duration=duration).set_audio(audio)
                 
-                txt_clip = TextClip("Sound on 🔊", fontsize=50, color='white', font='Arial-Bold', stroke_color='black', stroke_width=2)
-                txt_clip = txt_clip.set_position('center').set_duration(duration)
+                # Overlay-Text ohne ImageMagick erstellen (mit PIL)
+                text_img_path = "text_overlay.png"
+                img = Image.new('RGBA', (400, 100), color=(0, 0, 0, 160)) # Dunkles transparentes Feld
+                draw = ImageDraw.Draw(img)
+                draw.text((30, 40), "Sound on!", fill="white")
+                img.save(text_img_path)
+                
+                txt_clip = ImageClip(text_img_path).set_position('center').set_duration(duration)
                 
                 final_video = CompositeVideoClip([bg_looped, txt_clip])
                 output_path = "final_output.mp4"
