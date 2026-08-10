@@ -14,16 +14,15 @@ import moviepy.video.fx.all as vfx
 
 st.set_page_config(page_title="Faceless AI Video Creator", layout="centered")
 
-# --- STREAMLIT GEDÄCHTNIS (Verhindert den Reset-Bug beim Download) ---
+# --- STREAMLIT GEDÄCHTNIS ---
 if "video_ready" not in st.session_state:
     st.session_state.video_ready = False
 if "video_path" not in st.session_state:
     st.session_state.video_path = ""
 
-st.title("🎬 Faceless AI Video Creator (100% Free)")
-st.write("Generiert hochauflösende KI-Bilder mit Kamera-Zoom.")
+st.title("🎬 Faceless AI Video Creator (Turbo & Fullscreen)")
+st.write("Generiert 8 hochauflösende KI-Bilder mit Kamera-Zoom.")
 
-# --- Groq Key laden ---
 groq_key = st.secrets.get("GROQ_API_KEY", "")
 
 if not groq_key:
@@ -38,10 +37,9 @@ if st.button("🚀 Faceless Video generieren") and audio_file:
     if not groq_key:
         st.error("Bitte hinterlege deinen Groq API Key!")
     else:
-        # Reset des Gedächtnisses für ein neues Video
         st.session_state.video_ready = False 
         
-        with st.spinner("KI verarbeitet Audio & generiert Visuals..."):
+        with st.spinner("KI verarbeitet Audio & generiert 8 Bilder..."):
             
             temp_audio_path = "temp_audio.mp3"
             with open(temp_audio_path, "wb") as f:
@@ -57,11 +55,10 @@ if st.button("🚀 Faceless Video generieren") and audio_file:
                     response_format="text"
                 )
             
-            st.success("Transkription fertig!")
-            
-            st.info("🧠 Llama-3 KI erstellt Bild-Prompts zum Text...")
-            prompt_request = f"""Based on this transcript, generate 4 distinct, hyper-detailed visual prompts in English for a cinematic dark motivational faceless video. 
-Output ONLY the 4 prompts, separated by newlines. Do not write intro, numbers or explanations.
+            # --- MEHR BILDER: 8 Prompts statt 4 ---
+            st.info("🧠 Llama-3 KI erstellt 8 Bild-Prompts zum Text...")
+            prompt_request = f"""Based on this transcript, generate 8 distinct, hyper-detailed visual prompts in English for a cinematic dark motivational faceless video. 
+Output ONLY the 8 prompts, separated by newlines. Do not write intro, numbers or explanations.
 Transcript: "{transcript_text}"
 """
             chat_completion = client.chat.completions.create(
@@ -70,14 +67,13 @@ Transcript: "{transcript_text}"
             )
             
             raw_prompts = chat_completion.choices[0].message.content.strip().split("\n")
-            prompts = [p.strip("- ").strip("1234567890. ") for p in raw_prompts if p.strip()][:4]
+            prompts = [p.strip("- ").strip("1234567890. ") for p in raw_prompts if p.strip()][:8]
             
-            st.info("🎨 KI generiert 9:16 Faceless-Bilder in High Quality...")
+            st.info("🎨 KI generiert 8 vertikale Fullscreen-Bilder...")
             image_paths = []
             for idx, p_text in enumerate(prompts):
                 encoded_p = urllib.parse.quote(p_text)
-                # Volle 1080x1920 Auflösung bleibt erhalten!
-                img_url = f"https://image.pollinations.ai/prompt/{encoded_p}%20cinematic%20dark%20moody%20faceless%20aesthetic%209:16?width=1080&height=1920&nologo=true&seed={idx+25}"
+                img_url = f"https://image.pollinations.ai/prompt/{encoded_p}%20cinematic%20dark%20moody%20faceless%20aesthetic%20vertical%209:16?width=1080&height=1920&nologo=true&seed={idx+50}"
                 
                 img_bytes = requests.get(img_url).content
                 img_filename = f"ai_img_{idx}.png"
@@ -85,14 +81,17 @@ Transcript: "{transcript_text}"
                     img_file.write(img_bytes)
                 image_paths.append(img_filename)
                 
-            st.info("🎬 Rendere Video mit Turbo-Modus... (Bitte kurz warten)")
+            st.info("🎬 Rendere Video mit Turbo-Modus... (Das geht jetzt deutlich schneller!)")
             audio = AudioFileClip(temp_audio_path)
             total_duration = audio.duration
             duration_per_img = total_duration / len(image_paths)
             
             video_clips = []
             for img_p in image_paths:
-                img_clip = ImageClip(img_p).set_duration(duration_per_img)
+                # --- VOLLBILD-GARANTIE: Bild wird hart auf 1080x1920 skaliert ---
+                img_clip = ImageClip(img_p).resize(newsize=(1080, 1920)).set_duration(duration_per_img)
+                
+                # Zoom-Effekt
                 zoomed = img_clip.fx(vfx.resize, lambda t: 1 + 0.15 * (t / duration_per_img))
                 comp = CompositeVideoClip([zoomed.set_position('center')], size=(1080, 1920)).set_duration(duration_per_img)
                 video_clips.append(comp)
@@ -108,32 +107,30 @@ Transcript: "{transcript_text}"
             txt_clip = ImageClip(text_img_path).set_position(('center', 1500)).set_duration(total_duration)
             
             final_video = CompositeVideoClip([final_bg, txt_clip])
-            
-            # --- TURBO-RENDERING (Höchste Qualität, aber schnellere Verarbeitung) ---
             output_path = "final_faceless_video.mp4"
+            
+            # --- SPEED-HACK: fps auf 15 reduziert für 40% schnelleres Rendern ---
             final_video.write_videofile(
                 output_path, 
-                fps=24, 
+                fps=15, 
                 codec="libx264", 
                 audio_codec="aac",
-                preset="ultrafast", # Verhindert Server-Abstürze durch schnellere Verarbeitung
-                threads=2,          # Nutzt beide Streamlit-Kerne
-                logger=None         # Hält die Streamlit-Logs sauber und spart Zeit
+                preset="ultrafast", 
+                threads=4,          
+                logger=None         
             )
             
-            # Video sicher im Gedächtnis speichern
             st.session_state.video_path = output_path
             st.session_state.video_ready = True
             
-            st.success("🎉 Dein Faceless KI-Video ist fertig!")
+            st.success("🎉 Dein schnelles Faceless KI-Video ist fertig!")
 
-# --- DOWNLOAD BEREICH (Außerhalb des Generier-Buttons!) ---
 if st.session_state.video_ready and os.path.exists(st.session_state.video_path):
     st.markdown("### Dein Video ist bereit zum Download!")
     with open(st.session_state.video_path, "rb") as f:
         st.download_button(
             label="⬇️ Video auf iPhone speichern", 
             data=f, 
-            file_name="faceless_video.mp4", 
+            file_name="faceless_video_turbo.mp4", 
             mime="video/mp4"
         )
