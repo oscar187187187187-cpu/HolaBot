@@ -4,6 +4,12 @@ import os
 import urllib.parse
 from groq import Groq
 from PIL import Image, ImageDraw
+
+# --- BUGFIX FÜR MOVIEPY (Ken-Burns-Zoom) ---
+# Biegt den veralteten Bildbefehl auf die neue Version um, damit der Server nicht abstürzt.
+if not hasattr(Image, 'ANTIALIAS'):
+    Image.ANTIALIAS = Image.LANCZOS
+
 from moviepy.editor import ImageClip, AudioFileClip, CompositeVideoClip, concatenate_videoclips
 import moviepy.video.fx.all as vfx
 
