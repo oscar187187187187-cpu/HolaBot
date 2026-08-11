@@ -5,6 +5,7 @@ import urllib.parse
 import textwrap
 from groq import Groq
 from PIL import Image, ImageDraw, ImageFont
+from proglog import ProgressBarLogger
 
 # --- BUGFIX FÜR MOVIEPY (ANTIALIAS) ---
 if not hasattr(Image, 'ANTIALIAS'):
@@ -15,8 +16,24 @@ import moviepy.video.fx.all as vfx
 
 st.set_page_config(page_title="Faceless Batch Creator", layout="centered")
 
-# --- SCHRIFTART FÜR UNTERTITEL HERUNTERLADEN ---
-# Da Streamlit keine coolen Schriftarten hat, laden wir eine fette Social-Media-Schrift (Roboto Black)
+# --- LIVE-LOGGER FÜR DEN PROZENTBALKEN ---
+class StreamlitLogger(ProgressBarLogger):
+    def __init__(self, progress_bar, status_text):
+        super().__init__()
+        self.progress_bar = progress_bar
+        self.status_text = status_text
+
+    def bars_callback(self, bar, attr, value, old_value=None):
+        total = self.bars[bar]['total']
+        if total > 0:
+            percent = value / total
+            # Das Rendern macht die letzten 50% der Gesamtarbeit aus
+            global_percent = 50 + int(percent * 50)
+            global_percent = max(1, min(100, global_percent))
+            self.progress_bar.progress(global_percent)
+            self.status_text.text(f"🎬 Video wird gerendert... {global_percent}% abgeschlossen")
+
+# --- SCHRIFTART HERUNTERLADEN ---
 FONT_PATH = "Roboto-Black.ttf"
 if not os.path.exists(FONT_PATH):
     font_url = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Black.ttf"
@@ -24,27 +41,28 @@ if not os.path.exists(FONT_PATH):
     with open(FONT_PATH, "wb") as f:
         f.write(r.content)
 
-# Funktion für dynamische Untertitel-Bilder (Transparent)
+# --- UNTERTITEL: KLEINER UND UNTEN PLATZIERT ---
 def create_subtitle_clip(text, duration, video_size=(1080, 1920)):
-    # Text umbrechen, damit er nicht aus dem Bildschirm ragt
-    wrapped_text = "\n".join(textwrap.wrap(text, width=25))
+    wrapped_text = "\n".join(textwrap.wrap(text, width=35)) # Breiter für kleinere Schrift
     
-    img = Image.new('RGBA', video_size, (0, 0, 0, 0)) # Komplett transparent
+    img = Image.new('RGBA', video_size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
     try:
-        font = ImageFont.truetype(FONT_PATH, 80) # Sehr große, fette Schrift
+        font = ImageFont.truetype(FONT_PATH, 50) # Schrift deutlich verkleinert
     except:
         font = ImageFont.load_default()
         
-    # Text zentriert zeichnen mit schwarzer, dicker Umrandung (Outline) für Lesbarkeit
+    # Y-Position: Auf 80% der Bildschirmhöhe gesetzt (untere Hälfte)
+    y_position = int(video_size[1] * 0.8)
+    
     draw.multiline_text(
-        (video_size[0]//2, video_size[1]//2), 
+        (video_size[0]//2, y_position), 
         wrapped_text, 
         font=font, 
         fill="white", 
         stroke_fill="black", 
-        stroke_width=6, 
+        stroke_width=4, 
         anchor="mm", 
         align="center"
     )
@@ -54,8 +72,8 @@ def create_subtitle_clip(text, duration, video_size=(1080, 1920)):
     return ImageClip(temp_img_path).set_duration(duration)
 
 
-st.title("🎬 Faceless AI Creator (Batch & Subtitles)")
-st.write("Mehrere Dateien hochladen. Dynamische Untertitel. Maximale Qualität.")
+st.title("🎬 Faceless AI Creator")
+st.write("Mehrere Dateien hochladen. Live-Ladebalken. Kleine Untertitel.")
 
 groq_key = st.secrets.get("GROQ_API_KEY", "")
 if not groq_key:
@@ -63,8 +81,7 @@ if not groq_key:
 else:
     st.sidebar.success("✅ Groq Key geladen!")
 
-# --- MEHRERE DATEIEN HOCHLADEN (BATCH) ---
-audio_files = st.file_uploader("Audios hochladen (MP3/WAV) - Mehrere erlaubt!", type=["mp3", "wav"], accept_multiple_files=True)
+audio_files = st.file_uploader("Audios hochladen (MP3/WAV)", type=["mp3", "wav"], accept_multiple_files=True)
 
 if st.button("🚀 Videos jetzt produzieren") and audio_files:
     if not groq_key:
@@ -72,25 +89,24 @@ if st.button("🚀 Videos jetzt produzieren") and audio_files:
     else:
         client = Groq(api_key=groq_key)
         
-        # Schleife über alle hochgeladenen Dateien
         for idx, audio_file in enumerate(audio_files):
             st.markdown(f"### ⚙️ Verarbeite Video {idx + 1} von {len(audio_files)}: `{audio_file.name}`")
             
-            # --- 0-100% LADEBALKEN ---
+            # --- DER NEUE 0-100% BALKEN ---
             progress_bar = st.progress(0)
             status_text = st.empty()
             
             try:
-                # Schritt 1: Speichern (10%)
-                status_text.text("Schritt 1/5: Audio wird vorbereitet...")
+                # 10%
+                status_text.text("Audio wird hochgeladen...")
                 progress_bar.progress(10)
                 temp_audio_path = f"temp_audio_{idx}.mp3"
                 with open(temp_audio_path, "wb") as f:
                     f.write(audio_file.read())
                     
-                # Schritt 2: Whisper Transkription (30%)
-                status_text.text("Schritt 2/5: Whisper transkribiert (mit Zeitstempeln)...")
-                progress_bar.progress(30)
+                # 20%
+                status_text.text("KI schreibt Untertitel...")
+                progress_bar.progress(20)
                 with open(temp_audio_path, "rb") as file:
                     whisper_response = client.audio.transcriptions.create(
                         file=(temp_audio_path, file.read()),
@@ -99,7 +115,6 @@ if st.button("🚀 Videos jetzt produzieren") and audio_files:
                     )
                 segments = whisper_response.segments
                 
-                # Cloud-Limitierung auf max 12 Segmente (damit der Server nicht crasht)
                 if len(segments) > 12:
                     combined_segments = []
                     step = len(segments) // 12 + 1
@@ -113,20 +128,17 @@ if st.button("🚀 Videos jetzt produzieren") and audio_files:
                         })
                     segments = combined_segments[:12]
 
-                # Schritt 3: Llama-3 Prompts mit DOUBLE-CHECK (50%)
-                status_text.text("Schritt 3/5: KI generiert & prüft Bild-Prompts (Double-Check)...")
-                progress_bar.progress(50)
+                # 35%
+                status_text.text("KI generiert Bild-Ideen...")
+                progress_bar.progress(35)
                 
                 segments_text_structured = ""
                 for s_idx, seg in enumerate(segments):
                     segments_text_structured += f"Segment {s_idx+1}: {seg['text'].strip()}\n"
 
-                # Der neue "Double-Check" Prompt
                 prompt_request = f"""You are a cinematic director. 
-Task: 
-1. Create exactly {len(segments)} hyper-detailed visual prompts in English for a dark motivational faceless video based on the segments below.
-2. DOUBLE-CHECK: Review your prompts. Ensure they perfectly match the semantic meaning of the text. If the text talks about 'success', show climbing or victory. If it talks about 'pain', show struggle.
-3. Output ONLY the {len(segments)} final validated prompts, separated by newlines. No intro, no numbers.
+Create exactly {len(segments)} hyper-detailed visual prompts in English for a dark motivational faceless video.
+Output ONLY the {len(segments)} prompts, separated by newlines. No intro, no numbers.
 Transcript:
 "{segments_text_structured}"
 """
@@ -137,9 +149,9 @@ Transcript:
                 raw_prompts = chat_completion.choices[0].message.content.strip().split("\n")
                 prompts_final = [p.strip("- ").strip("1234567890. ") for p in raw_prompts if p.strip()][:len(segments)]
                 
-                # Schritt 4: KI Bilder laden (70%)
-                status_text.text("Schritt 4/5: KI lädt hochauflösende Visuals herunter...")
-                progress_bar.progress(70)
+                # 50%
+                status_text.text("Bilder werden heruntergeladen...")
+                progress_bar.progress(50)
                 
                 image_paths = []
                 for p_idx, p_text in enumerate(prompts_final):
@@ -151,34 +163,26 @@ Transcript:
                         img_file.write(img_bytes)
                     image_paths.append(img_filename)
 
-                # Schritt 5: Videoschnitt & Untertitel (90% - dauert am längsten)
-                status_text.text("Schritt 5/5: Rendere Video mit dynamischen Untertiteln (Turbo-Modus)...")
-                progress_bar.progress(90)
-                
+                # Ab hier übernimmt der Custom Logger (50% bis 100%)
                 audio_full = AudioFileClip(temp_audio_path)
                 video_clips = []
                 
                 for s_idx, img_p in enumerate(image_paths):
-                    # Dauer berechnen
                     current_duration = segments[s_idx]["end"] - segments[s_idx]["start"]
-                    if current_duration <= 0: current_duration = 1.0 # Fallback
+                    if current_duration <= 0: current_duration = 1.0 
                     
-                    # 1. Das Hintergrundbild (Vollbild + Ken Burns Zoom)
                     bg_clip = ImageClip(img_p).resize(newsize=(1080, 1920)).set_duration(current_duration)
                     bg_zoomed = bg_clip.fx(vfx.resize, lambda t: 1 + 0.15 * (t / current_duration)).set_position('center')
                     
-                    # 2. Der dynamische Untertitel für dieses Segment
                     sub_clip = create_subtitle_clip(segments[s_idx]["text"], current_duration)
-                    
-                    # Zusammenfügen
                     comp = CompositeVideoClip([bg_zoomed, sub_clip], size=(1080, 1920)).set_duration(current_duration)
                     video_clips.append(comp)
                     
                 final_bg = concatenate_videoclips(video_clips, method="compose").set_audio(audio_full)
-                
                 output_path = f"final_faceless_{idx}.mp4"
                 
-                # Turbo Rendern
+                # Turbo Rendern MIT Live-Ladebalken
+                live_logger = StreamlitLogger(progress_bar, status_text)
                 final_bg.write_videofile(
                     output_path, 
                     fps=15, 
@@ -186,21 +190,19 @@ Transcript:
                     audio_codec="aac",
                     preset="ultrafast", 
                     threads=4,          
-                    logger=None         
+                    logger=live_logger  # Balken wird live geupdated!
                 )
                 
-                # FERTIG (100%)
                 progress_bar.progress(100)
                 status_text.text("✅ Video erfolgreich generiert!")
                 
-                # Download Button für dieses spezifische Video anzeigen
                 with open(output_path, "rb") as f:
                     st.download_button(
                         label=f"⬇️ {audio_file.name} herunterladen", 
                         data=f, 
                         file_name=f"faceless_{audio_file.name}.mp4", 
                         mime="video/mp4",
-                        key=f"download_{idx}" # Wichtig für Streamlit (eindeutiger Button pro Video)
+                        key=f"download_{idx}" 
                     )
                     
             except Exception as e:
