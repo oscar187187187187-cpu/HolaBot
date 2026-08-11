@@ -71,24 +71,6 @@ def create_subtitle_clip(text, duration, video_size=(1080, 1920)):
     img.save(temp_img_path)
     return ImageClip(temp_img_path).set_duration(duration)
 
-# --- PUSH BENACHRICHTIGUNG AN DEIN HANDY ---
-def send_push_notification(topic, title, message):
-    if not topic:
-        return
-    try:
-        requests.post(
-            f"https://ntfy.sh/{topic}",
-            data=message.encode('utf-8'),
-            headers={
-                "Title": title,
-                "Priority": "high",
-                "Tags": "movie_camera,crown"
-            },
-            timeout=5
-        )
-    except Exception as e:
-        print(f"Push-Fehler: {e}")
-
 
 st.title("🎬 Faceless AI Creator")
 st.write("Mehrere Dateien hochladen. Live-Ladebalken. Kleine Untertitel.")
@@ -98,11 +80,6 @@ if not groq_key:
     groq_key = st.sidebar.text_input("Groq API Key (Gratis)", type="password")
 else:
     st.sidebar.success("✅ Groq Key geladen!")
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔔 Push-Benachrichtigung")
-push_topic = st.sidebar.text_input("ntfy-Kanalname:", value="mein-faceless-kanal-99")
-st.sidebar.caption("👉 Lade die Gratis-App 'ntfy' aufs Handy und abonniere dort diesen Kanalnamen!")
 
 audio_files = st.file_uploader("Audios hochladen (MP3/WAV)", type=["mp3", "wav"], accept_multiple_files=True)
 
@@ -115,7 +92,7 @@ if st.button("🚀 Videos jetzt produzieren") and audio_files:
         for idx, audio_file in enumerate(audio_files):
             st.markdown(f"### ⚙️ Verarbeite Video {idx + 1} von {len(audio_files)}: `{audio_file.name}`")
             
-            # --- DER 0-100% BALKEN ---
+            # --- DER NEUE 0-100% BALKEN ---
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -159,7 +136,7 @@ if st.button("🚀 Videos jetzt produzieren") and audio_files:
                 for s_idx, seg in enumerate(segments):
                     segments_text_structured += f"Segment {s_idx+1}: {seg['text'].strip()}\n"
 
-                prompt_request = f"""You are a cinematic director.
+                prompt_request = f"""You are a cinematic director. 
 Create exactly {len(segments)} hyper-detailed visual prompts in English for a dark motivational faceless video.
 Output ONLY the {len(segments)} prompts, separated by newlines. No intro, no numbers.
 Transcript:
@@ -204,7 +181,7 @@ Transcript:
                 final_bg = concatenate_videoclips(video_clips, method="compose").set_audio(audio_full)
                 output_path = f"final_faceless_{idx}.mp4"
                 
-                # Turbo Rendern MIT Live-Ladebalken in VOLLER Qualität
+                # Turbo Rendern MIT Live-Ladebalken
                 live_logger = StreamlitLogger(progress_bar, status_text)
                 final_bg.write_videofile(
                     output_path, 
@@ -213,18 +190,11 @@ Transcript:
                     audio_codec="aac",
                     preset="ultrafast", 
                     threads=4,          
-                    logger=live_logger  # Live-Ladebalken aktiv!
+                    logger=live_logger  # Balken wird live geupdated!
                 )
                 
                 progress_bar.progress(100)
                 status_text.text("✅ Video erfolgreich generiert!")
-                
-                # Benachrichtigung aufs Handy schicken
-                send_push_notification(
-                    push_topic, 
-                    "🎬 Video Fertig!", 
-                    f"Video {idx + 1} ({audio_file.name}) wurde in voller Qualität erstellt!"
-                )
                 
                 with open(output_path, "rb") as f:
                     st.download_button(
